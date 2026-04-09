@@ -394,4 +394,3 @@ All parameters are centralized in `config/config.yaml`:
 | PC Multi-Vehicle Cooperation | V2V cooperative avoidance | 🔨 Ready |
 | RPi Car Deployment | Real-world obstacle avoidance | ✅ Done |
 | Multi-Vehicle Testing | V2V cooperative scenarios | 📋 Planned |
-| Mid-term Evaluation | Performance metrics & report | 📋 Planned |
