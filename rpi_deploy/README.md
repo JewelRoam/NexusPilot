@@ -24,6 +24,9 @@
 超声波传感器:
   TRIG=GPIO4, ECHO=GPIO17
 
+按键 & LED:
+  按键=GPIO19, 绿色LED=GPIO5, 红色LED=GPIO6
+
 I2C (PCA9685):
   SDA=GPIO2, SCL=GPIO3, 地址=0x40
 
@@ -43,6 +46,7 @@ rpi_deploy/
 ├── servo_controller.py      # PCA9685舵机控制
 ├── ultrasonic_sensor.py     # HC-SR04超声波传感器
 ├── camera_driver.py         # USB摄像头驱动
+├── obstacle_avoidance.py    # 三模式避障（simple/servo/apf）
 ├── remote_control.py        # 网络远程控制
 ├── rpi_car_controller.py    # 主控制程序（原有）
 └── tests/                   # 硬件测试脚本
@@ -51,6 +55,7 @@ rpi_deploy/
     ├── test_servo.py        # 舵机测试
     ├── test_ultrasonic.py   # 超声波测试
     ├── test_camera.py       # 摄像头测试
+    ├── test_obstacle_avoidance.py # 避障算法测试
     └── test_remote_control.py # 远程控制测试
 ```
 
@@ -135,6 +140,61 @@ python3 -m rpi_deploy.rpi_car_controller --mode cooperative --v2v
 
 ```bash
 python3 -m rpi_deploy.rpi_car_controller --mode remote
+```
+
+## 避障模块 (obstacle_avoidance)
+
+基于 `resources/makerobo_code` 案例接口实现的三模式避障系统。
+
+### 三种避障模式
+
+| 模式 | 命令 | 对应案例 | 算法 |
+|------|------|----------|------|
+| **simple** | `--mode simple` | 案例6 | 前方超声波仅，障碍→后退+右转 |
+| **servo** | `--mode servo` | 案例7 | 舵机扫描左/右，智能选择转向方向 |
+| **apf** | `--mode apf` | apf_planner | APF人工势场，排斥力∝1/d，平滑避障 |
+
+### 使用方法
+
+```bash
+cd ~/QMC9_Project
+
+# 默认 servo 模式
+python3 -m rpi_deploy.obstacle_avoidance
+
+# 简单避障（案例6风格）
+python3 -m rpi_deploy.obstacle_avoidance --mode simple
+
+# 舵机增强避障（案例7风格）
+python3 -m rpi_deploy.obstacle_avoidance --mode servo
+
+# APF势场避障
+python3 -m rpi_deploy.obstacle_avoidance --mode apf
+```
+
+按板载按键启动机器人，`Ctrl+C` 退出。
+
+### APF算法参数
+
+| 参数 | 值 | 说明 |
+|------|-----|------|
+| K_REP | 60.0 | 排斥力增益 |
+| K_ATT | 1.0 | 吸引力增益 |
+| D₀ | 80cm | 排斥力影响距离 |
+| LATERAL_SCALE | 0.6 | 侧向力缩放因子 |
+| EMERGENCY_DIST | 15cm | 紧急制动距离 |
+
+> **注意**：使用简化APF公式 F = K_REP × (1/d − 1/D₀)，不含经典1/d²梯度项，因为距离单位为厘米(1–400cm)，1/d²项在此尺度下产生极小值导致排斥力不足。
+
+### 仿真模式
+
+当 `gpiozero` 不可用时（PC开发调试），程序自动进入仿真模式：电机动作输出到控制台，超声波返回固定安全距离，自动启动（无需按键）。
+
+### 避障算法测试
+
+```bash
+cd ~/QMC9_Project
+python3 -m unittest rpi_deploy.tests.test_obstacle_avoidance -v
 ```
 
 ## API参考

@@ -89,6 +89,14 @@ class NetworkConfig:
 
 
 @dataclass
+class ButtonLEDConfig:
+    """按键和LED配置"""
+    button_pin: int = 19        # 启动/停止按键
+    green_led_pin: int = 5      # 运行指示灯
+    red_led_pin: int = 6        # 避障指示灯
+
+
+@dataclass
 class ControlConfig:
     """运动控制配置"""
     # 速度限制
@@ -119,6 +127,7 @@ class HardwareConfig:
         self.camera = CameraConfig()
         self.i2c = I2CConfig()
         self.network = NetworkConfig()
+        self.button_led = ButtonLEDConfig()
         self.control = ControlConfig()
         
         # 从环境变量加载覆盖配置
@@ -154,6 +163,7 @@ class HardwareConfig:
             'camera': self.camera.__dict__,
             'i2c': self.i2c.__dict__,
             'network': self.network.__dict__,
+            'button_led': self.button_led.__dict__,
             'control': self.control.__dict__
         }
     
@@ -171,6 +181,8 @@ class HardwareConfig:
             config.i2c = I2CConfig(**config_dict['i2c'])
         if 'network' in config_dict:
             config.network = NetworkConfig(**config_dict['network'])
+        if 'button_led' in config_dict:
+            config.button_led = ButtonLEDConfig(**config_dict['button_led'])
         if 'control' in config_dict:
             config.control = ControlConfig(**config_dict['control'])
         return config
