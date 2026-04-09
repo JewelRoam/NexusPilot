@@ -135,16 +135,20 @@ python3 -m rpi_deploy.rpi_car_controller --mode obstacle_avoidance
 python3 -m rpi_deploy.rpi_car_controller --mode remote
 ```
 
-PC端客户端控制：
+PC端键盘遥控：
+```bash
+python -m rpi_deploy.pc_remote_controller --host 192.168.137.33
+```
+或编程式调用：
 ```python
-from rpi_deploy.remote_control import RemoteControlClient
-client = RemoteControlClient("192.168.137.33")  # 树莓派IP
-client.connect()
-client.move_forward(speed=50)   # speed: 0-100
-client.turn_left(speed=30)
-client.stop()
-client.set_servo("ultrasonic", 90)
-client.get_status()             # 获取车辆状态
+from rpi_deploy.pc_remote_controller import PCRemoteController
+ctrl = PCRemoteController("192.168.137.33", port=5000)
+ctrl.connect()
+ctrl.send_move('forward')   # WASD方向控制
+ctrl.send_stop()            # 停止
+ctrl.send_servo('ultrasonic', 90)  # 舵机控制
+ctrl.query_status()         # 查询车辆状态
+ctrl.disconnect()
 ```
 
 ### V2V协作避障模式
