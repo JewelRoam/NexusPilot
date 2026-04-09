@@ -37,6 +37,10 @@ output/
 .DS_Store
 Thumbs.db
 Desktop.ini
+*.lnk
+
+# Backup files
+*.backup
 
 # Logs
 *.log

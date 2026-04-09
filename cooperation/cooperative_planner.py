@@ -74,6 +74,12 @@ class CooperativePlanner:
         now = time.time()
         nearby = {}
         
+        # Debug log received messages
+        if not v2v_messages:
+            print(f"[Coop DEBUG] {self.vehicle_id}: No V2V messages received this frame")
+        else:
+            print(f"[Coop DEBUG] {self.vehicle_id}: Received {len(v2v_messages)} V2V messages")
+        
         for vid, msg in v2v_messages.items():
             other_x, other_y, _ = msg.position
             dist = math.sqrt((other_x - ego_x) ** 2 + (other_y - ego_y) ** 2)
@@ -87,9 +93,12 @@ class CooperativePlanner:
                 'intent': msg.intent,
             }
             
+            print(f"[Coop DEBUG] {self.vehicle_id}: Tracking {vid} at dist={dist:.1f}m")
+            
             # Only include vehicles within coordination range
             if dist <= self.coordination_range:
                 nearby[vid] = msg
+                print(f"[Coop DEBUG] {self.vehicle_id}: {vid} IN RANGE (coord_range={self.coordination_range}m)")
         
         # Clean up stale entries (>5 seconds old)
         stale = [vid for vid, data in self._nearby_vehicles.items() 
@@ -142,28 +151,17 @@ class CooperativePlanner:
         Returns:
             CooperativeDecision with action and shared obstacles
         """
-        if not v2v_messages:
-            return CooperativeDecision(
-                action="proceed",
-                reason="No cooperative vehicles in range",
-                priority=0,
-                shared_obstacles=[],
-                speed_adjustment=1.0,
-                cooperative_intent="cruising",
-            )
-
-        # STEP 1: Filter vehicles by coordination range
+        # STEP 1: Always update nearby vehicles tracking (even with empty messages)
         nearby_messages = self._update_nearby_vehicles(ego_x, ego_y, v2v_messages)
         coord_status, num_nearby = self._get_coordination_status(ego_x, ego_y)
-        
-        # If no vehicles in coordination range, just use shared detections passively
+
+        # If no vehicles in coordination range, return inactive
         if not nearby_messages or coord_status == "inactive":
-            shared_obstacles = self._fuse_shared_detections(ego_x, ego_y, v2v_messages)
             return CooperativeDecision(
                 action="proceed",
-                reason=f"Coordination inactive ({num_nearby} vehicles beyond {self.coordination_range:.0f}m)",
+                reason=f"No vehicles in coordination range ({num_nearby} vehicles beyond {self.coordination_range:.0f}m)",
                 priority=0,
-                shared_obstacles=shared_obstacles,
+                shared_obstacles=[],
                 speed_adjustment=1.0,
                 cooperative_intent="cruising",
             )
@@ -208,7 +206,7 @@ class CooperativePlanner:
                 ego_x, ego_y, ego_yaw, ego_speed, nearby_messages
             )
             if intersection:
-                return intersection._replace_shared(shared_obstacles)
+                return intersection.to_decision(shared_obstacles)
 
         # 4. Check deadlock scenario (only when close)
         if coord_status in ["active", "warning", "critical"]:
@@ -579,16 +577,17 @@ class CooperativePlanner:
         return None
 
 
+@dataclass
 class _IntersectionResult:
     """Helper for intersection check results."""
-    def __init__(self, action, reason, priority, speed_adjustment, cooperative_intent):
-        self.action = action
-        self.reason = reason
-        self.priority = priority
-        self.speed_adjustment = speed_adjustment
-        self.cooperative_intent = cooperative_intent
+    action: str
+    reason: str
+    priority: int
+    speed_adjustment: float
+    cooperative_intent: str
+    shared_obstacles: List[Obstacle] = None
 
-    def _replace_shared(self, shared_obstacles):
+    def to_decision(self, shared_obstacles: List[Obstacle]) -> CooperativeDecision:
         return CooperativeDecision(
             action=self.action,
             reason=self.reason,

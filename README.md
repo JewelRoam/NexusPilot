@@ -62,8 +62,18 @@ QMC9_Project/
 │   ├── run_carla_bridge.bat     # Launch CARLA bridge
 │   ├── run_ros_stack.bat        # Launch ROS 2 nodes
 │   └── README.md                # ROS 2 setup guide
-├── rpi_deploy/
-│   └── rpi_car_controller.py    # Raspberry Pi 5 real-world deployment
+├── rpi_deploy/                  # Raspberry Pi 5 real-world deployment
+│   ├── hardware_config.py       # Pin mappings & configuration
+│   ├── motor_driver.py          # 4WD motor control (gpiozero)
+│   ├── servo_controller.py      # PCA9685 servo (I2C)
+│   ├── ultrasonic_sensor.py     # HC-SR04 distance sensor
+│   ├── camera_driver.py         # USB camera + Flask MJPEG stream
+│   ├── obstacle_avoidance.py    # 3-mode avoidance (simple/servo/apf)
+│   ├── remote_control.py        # TCP JSON remote control server
+│   ├── rpi_car_controller.py    # Main controller (4 modes)
+│   ├── pc_remote_controller.py  # PC-side keyboard remote client
+│   ├── pc_v2v_coordinator.py    # PC-side V2V cooperation coordinator
+│   └── tests/                   # Hardware test scripts
 ├── model/
 │   ├── train.py                 # YOLOv11 training on KITTI
 │   ├── export_model.py          # ONNX export
@@ -142,15 +152,23 @@ python testing/example_usage.py --example 4  # Single scenario debug
 
 ### Step 4: Raspberry Pi Deployment
 
+See [rpi_deploy/README.md](rpi_deploy/README.md) for full documentation.
+
 ```bash
-# On Raspberry Pi 5 (via SSH):
-python rpi_deploy/rpi_car_controller.py
+# Obstacle avoidance mode (recommended)
+python3 -m rpi_deploy.rpi_car_controller --mode obstacle_avoidance
 
-# With V2V cooperative mode (PC as Edge Cloud):
-python rpi_deploy/rpi_car_controller.py --cooperative --pc-host 192.168.1.50
+# Remote control mode (PC keyboard control)
+python3 -m rpi_deploy.rpi_car_controller --mode remote
 
-# Headless mode (no display, SSH only):
-python rpi_deploy/rpi_car_controller.py --headless
+# V2V cooperative mode (PC as Edge Cloud)
+python3 -m rpi_deploy.rpi_car_controller --mode v2v --pc-host 192.168.1.50
+
+# Camera + YOLO perception mode
+python3 -m rpi_deploy.rpi_car_controller --mode camera
+
+# PC-side keyboard remote controller
+python -m rpi_deploy.pc_remote_controller --host 192.168.137.33
 ```
 
 ## Module Details
@@ -374,6 +392,6 @@ All parameters are centralized in `config/config.yaml`:
 | Obstacle Detection Model | YOLOv11n trained on KITTI | ✅ Done |
 | PC Single-Vehicle Loop | Perception→APF→Control in CARLA | 🔨 Ready |
 | PC Multi-Vehicle Cooperation | V2V cooperative avoidance | 🔨 Ready |
-| RPi Car Deployment | Real-world obstacle avoidance | 📋 Planned |
+| RPi Car Deployment | Real-world obstacle avoidance | ✅ Done |
 | Multi-Vehicle Testing | V2V cooperative scenarios | 📋 Planned |
 | Mid-term Evaluation | Performance metrics & report | 📋 Planned |

@@ -136,6 +136,7 @@ class V2VCommunicator:
         if self.protocol == "in_process" or self.protocol == "ros2_topic":
             with V2VCommunicator._bus_lock:
                 V2VCommunicator._shared_bus[self.vehicle_id] = message
+                print(f"[V2V BROADCAST] {self.vehicle_id} broadcast message, bus now has: {list(V2VCommunicator._shared_bus.keys())}")
 
         elif self.protocol == "socket":
             self._socket_broadcast(message)
@@ -153,13 +154,22 @@ class V2VCommunicator:
 
         if self.protocol == "in_process" or self.protocol == "ros2_topic":
             with V2VCommunicator._bus_lock:
+                # Debug: log bus contents
+                bus_vids = list(V2VCommunicator._shared_bus.keys())
                 for vid, msg in V2VCommunicator._shared_bus.items():
                     if vid == self.vehicle_id:
                         continue
-                    # Filter stale messages
+                    # Filter stale messages (100x tolerance for simulation)
                     age_ms = (now - msg.timestamp) * 1000
-                    if age_ms < self.max_latency_ms * 10:  # 10x tolerance
+                    if age_ms < self.max_latency_ms * 100:
                         messages[vid] = msg
+                        
+                # Debug log if no messages received
+                if not messages and bus_vids:
+                    # Filter out self
+                    others = [v for v in bus_vids if v != self.vehicle_id]
+                    if others:
+                        print(f"[V2V DEBUG] {self.vehicle_id}: Bus has {others} but no messages received (possible race condition)")
 
         elif self.protocol == "socket":
             messages = self._socket_receive()

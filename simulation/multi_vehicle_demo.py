@@ -150,6 +150,96 @@ class CooperativeVehicleAgent:
         self.frame_count += 1
         return rgb_image
 
+    def broadcast_v2v(self):
+        """
+        V2V Phase 1: Broadcast our current state and detections.
+        Called BEFORE step_with_v2v() for all agents in sync.
+        """
+        # Get sensor data
+        rgb_image = self.vehicle.get_rgb_image()
+        if rgb_image is None:
+            return
+        
+        depth_data = self.vehicle.get_depth_data()
+        if depth_data is not None:
+            self.depth_estimator.update_depth_image(depth_data)
+
+        # PERCEPTION
+        detections = self.detector.detect(rgb_image)
+        obstacles_det = self.detector.get_obstacles(detections)
+        self.depth_estimator.enrich_detections(obstacles_det, self.vehicle.get_transform())
+        self.latest_detections = detections
+
+        # Get ego state
+        ego_x, ego_y, _ = self.vehicle.get_location()
+        ego_yaw = self.vehicle.get_yaw()
+        ego_speed = self.vehicle.get_speed_kmh()
+
+        # Broadcast V2V message
+        shared_dets = self.v2v_comm.detections_to_shared(obstacles_det, ego_x, ego_y)
+        intent = self._determine_intent(ego_speed)
+        msg = self.v2v_comm.create_message(
+            position=(ego_x, ego_y, ego_yaw),
+            velocity=(ego_speed, ego_yaw),
+            detections=shared_dets,
+            intent=intent,
+        )
+        self.v2v_comm.broadcast(msg)
+        
+        # Store state for next phase
+        self._ego_x = ego_x
+        self._ego_y = ego_y
+        self._ego_yaw = ego_yaw
+        self._ego_speed = ego_speed
+        self._obstacles_det = obstacles_det
+
+    def step_with_v2v(self):
+        """
+        V2V Phase 2: Receive V2V messages and run full pipeline.
+        Called AFTER broadcast_all() for all agents in sync.
+        """
+        # Receive V2V messages from other vehicles
+        v2v_messages = self.v2v_comm.receive_all()
+
+        # COOPERATIVE PLANNING - Process V2V info
+        self.latest_coop_decision = self.coop_planner.process(
+            self._ego_x, self._ego_y, self._ego_yaw, self._ego_speed,
+            self._obstacles_det, v2v_messages
+        )
+
+        # Advance waypoint
+        self.vehicle.advance_waypoint(threshold=5.0)
+        goal = self.vehicle.get_next_waypoint()
+
+        if goal:
+            goal_x, goal_y = goal
+
+            # APF PLANNING with cooperative obstacles
+            local_obstacles = self.apf_planner.detections_to_obstacles(
+                self._obstacles_det, self._ego_x, self._ego_y, self._ego_yaw
+            )
+            # Merge cooperative shared obstacles
+            coop_obstacles = self.latest_coop_decision.shared_obstacles if self.latest_coop_decision else []
+
+            self.latest_planner_output = self.apf_planner.compute(
+                self._ego_x, self._ego_y, self._ego_yaw, self._ego_speed,
+                goal_x, goal_y, local_obstacles,
+                cooperative_obstacles=coop_obstacles,
+            )
+
+            # Apply cooperative speed adjustment
+            if self.latest_coop_decision:
+                adj = self.latest_coop_decision.speed_adjustment
+                self.latest_planner_output.target_speed *= adj
+
+            # CONTROL
+            self.latest_control = self.controller.compute_control(
+                self.latest_planner_output, self._ego_speed
+            )
+            self.controller.apply_carla_control(self.vehicle.actor, self.latest_control)
+
+        self.frame_count += 1
+
     def _determine_intent(self, speed: float) -> str:
         """Determine current driving intent."""
         if self.controller.is_emergency:
@@ -242,39 +332,86 @@ def main():
 
         logger.info(f"Spawning {num_coop_vehicles} cooperative vehicles...")
         
-        # Spawn cooperative vehicles - first one leads, others follow nearby
-        first_vehicle_location = None
+        # Spawn cooperative vehicles - CLOSE TOGETHER for V2V coordination testing
+        # Step 1: Spawn all vehicles at random locations first
+        # Step 2: Wait one tick for positions to settle
+        # Step 3: Teleport second vehicle to be close to first vehicle
+        managed_vehicles = []
+        
+        logger.info(f"Spawning {num_coop_vehicles} vehicles at random locations...")
         for i in range(num_coop_vehicles):
             vid = f"vehicle_{i}"
-            logger.info(f"Creating vehicle {vid}...")
+            managed = env.spawn_vehicle(vid)
+            managed_vehicles.append(managed)
+        
+        # Wait one tick for spawn positions to settle
+        env.tick()
+        time.sleep(0.1)
+        
+        # Log actual positions after spawn
+        for i, managed in enumerate(managed_vehicles):
+            loc = managed.actor.get_location()
+            logger.info(f"  vehicle_{i} actual position: ({loc.x:.1f}, {loc.y:.1f}, {loc.z:.1f})")
+        
+        # Step 3: Teleport second vehicle to be close to first vehicle (within 30m)
+        if len(managed_vehicles) >= 2:
+            import carla
+            first_transform = managed_vehicles[0].actor.get_transform()
+            first_loc = first_transform.location
+            first_yaw_rad = math.radians(first_transform.rotation.yaw)
             
-            if i == 0:
-                # First vehicle - spawn at random valid location
-                managed = env.spawn_vehicle(vid)
-                first_vehicle_location = managed.actor.get_location()
-            else:
-                # Following vehicles - try multiple nearby spawn points
-                spawn_points = env.map.get_spawn_points()
-                # Sort by distance to first vehicle
-                sorted_spawns = sorted(
-                    enumerate(spawn_points),
-                    key=lambda x: abs(x[1].location.x - first_vehicle_location.x) + \
-                                  abs(x[1].location.y - first_vehicle_location.y)
+            logger.info(f"First vehicle location: ({first_loc.x:.1f}, {first_loc.y:.1f}), yaw: {first_transform.rotation.yaw:.1f}")
+            
+            # Calculate target position: 20m behind and to the side
+            offset_distance = 20.0  # meters
+            target_x = first_loc.x - offset_distance * math.sin(first_yaw_rad)
+            target_y = first_loc.y + offset_distance * math.cos(first_yaw_rad)
+            target_z = first_loc.z + 0.5
+            
+            logger.info(f"Target position for vehicle_1: ({target_x:.1f}, {target_y:.1f})")
+            
+            # Create teleport transform
+            teleport_loc = carla.Location(x=target_x, y=target_y, z=target_z)
+            teleport_transform = carla.Transform(
+                teleport_loc,
+                carla.Rotation(yaw=first_transform.rotation.yaw)
+            )
+            
+            # Teleport second vehicle
+            managed_vehicles[1].actor.set_transform(teleport_transform)
+            env.tick()  # Ensure teleport takes effect
+            time.sleep(0.1)
+            
+            # Verify distance
+            new_loc = managed_vehicles[1].actor.get_location()
+            actual_dist = math.sqrt(
+                (new_loc.x - first_loc.x)**2 + (new_loc.y - first_loc.y)**2
+            )
+            logger.info(f"Teleported vehicle_1 to ({new_loc.x:.1f}, {new_loc.y:.1f})")
+            logger.info(f"V2V initial distance: {actual_dist:.1f}m (target: {offset_distance}m)")
+            
+            if actual_dist > 35:
+                logger.warning(f"Distance still too large ({actual_dist:.1f}m), teleporting closer...")
+                # Force closer position
+                target_x = first_loc.x - 15.0 * math.sin(first_yaw_rad)
+                target_y = first_loc.y + 15.0 * math.cos(first_yaw_rad)
+                teleport_loc = carla.Location(x=target_x, y=target_y, z=first_loc.z + 0.5)
+                teleport_transform = carla.Transform(
+                    teleport_loc,
+                    carla.Rotation(yaw=first_transform.rotation.yaw)
                 )
-                # Try spawn points between 30-150m away
-                managed = None
-                for idx, sp in sorted_spawns:
-                    dist = abs(sp.location.x - first_vehicle_location.x) + \
-                           abs(sp.location.y - first_vehicle_location.y)
-                    if 30 < dist < 150:
-                        try:
-                            managed = env.spawn_vehicle(vid, spawn_index=idx)
-                            break
-                        except RuntimeError:
-                            continue  # Try next spawn point
-                
-                if managed is None:
-                    managed = env.spawn_vehicle(vid)  # Fallback to random
+                managed_vehicles[1].actor.set_transform(teleport_transform)
+                env.tick()
+                time.sleep(0.1)
+                new_loc = managed_vehicles[1].actor.get_location()
+                actual_dist = math.sqrt(
+                    (new_loc.x - first_loc.x)**2 + (new_loc.y - first_loc.y)**2
+                )
+                logger.info(f"Final distance after re-teleport: {actual_dist:.1f}m")
+        
+        # Now create agents with the spawned vehicles
+        for i, managed in enumerate(managed_vehicles):
+            vid = f"vehicle_{i}"
             
             logger.info(f"Attaching RGB camera to {vid}...")
             managed.attach_rgb_camera(sensor_cfg.get('rgb_camera', {}))
@@ -333,6 +470,24 @@ def main():
 
         logger.info("Entering main loop...")
         last_debug_time = time.time()
+        
+        # V2V Sync: Collect messages before processing
+        # Phase 1: All agents broadcast their current state
+        def broadcast_all():
+            for agent in agents:
+                try:
+                    agent.broadcast_v2v()
+                except Exception as e:
+                    logger.error(f"Broadcast error for {agent.vehicle_id}: {e}")
+        
+        # Phase 2: All agents process V2V messages and run full pipeline
+        def process_all():
+            for agent in agents:
+                try:
+                    agent.step_with_v2v()
+                except Exception as e:
+                    logger.error(f"Step error for {agent.vehicle_id}: {e}")
+        
         while True:
             try:
                 metrics.start_timer("total_frame")
@@ -340,25 +495,37 @@ def main():
                 # Tick simulation
                 env.tick()
 
-                # Debug output every 5 seconds
+                # V2V Sync: Step 1 - All agents broadcast first
+                broadcast_all()
+                
+                # V2V Sync: Step 2 - All agents receive and process
+                process_all()
+
+                # Debug output every 5 seconds - SHOW V2V DISTANCE
                 current_time = time.time()
                 if current_time - last_debug_time > 5.0:
+                    # Calculate distance between vehicles
+                    if len(agents) >= 2:
+                        v0_x, v0_y, _ = agents[0].vehicle.get_location()
+                        v1_x, v1_y, _ = agents[1].vehicle.get_location()
+                        v2v_distance = ((v0_x - v1_x)**2 + (v0_y - v1_y)**2)**0.5
+                        
+                        # Get coordination status for both
+                        coord_0, n_0 = agents[0].coop_planner._get_coordination_status(v0_x, v0_y)
+                        coord_1, n_1 = agents[1].coop_planner._get_coordination_status(v1_x, v1_y)
+                        
+                        logger.info(f"🔗 V2V DISTANCE: {v2v_distance:.1f}m | "
+                                  f"V0: {coord_0.upper()} | V1: {coord_1.upper()}")
+                    
                     for agent in agents:
                         speed = agent.vehicle.get_speed_kmh()
                         loc = agent.vehicle.get_location()
-                        logger.info(f"DEBUG {agent.vehicle_id}: pos=({loc[0]:.1f}, {loc[1]:.1f}), speed={speed:.1f}km/h")
+                        logger.info(f"  {agent.vehicle_id}: pos=({loc[0]:.1f}, {loc[1]:.1f}), speed={speed:.1f}km/h")
                     last_debug_time = current_time
 
-                # Step all agents and display in separate windows
+                # Display all agent views
                 for i, agent in enumerate(agents):
                     metrics.start_timer(f"agent_{agent.vehicle_id}")
-                    try:
-                        rgb = agent.step()
-                    except Exception as e:
-                        logger.error(f"Error in agent {agent.vehicle_id}: {e}")
-                        traceback.print_exc()
-                        rgb = None
-                    metrics.stop_timer(f"agent_{agent.vehicle_id}")
 
                     # Prepare and display in separate window
                     win_name = window_names[i]
