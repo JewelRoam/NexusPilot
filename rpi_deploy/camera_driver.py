@@ -8,9 +8,11 @@ Camera Driver Module for Raspberry Pi Robot Car
 提供视频流、图像捕获和物体跟踪功能
 """
 
+from __future__ import annotations
+
 import time
 import threading
-from typing import Optional, Callable, Tuple
+from typing import Optional, Callable, Tuple, Any, TYPE_CHECKING
 from dataclasses import dataclass
 from queue import Queue, Empty
 
@@ -21,7 +23,14 @@ try:
     CV2_AVAILABLE = True
 except ImportError:
     CV2_AVAILABLE = False
+    cv2 = None
+    np = None
     print("[WARNING] OpenCV not available, camera functions disabled")
+
+# Type-only imports (never executed at runtime)
+if TYPE_CHECKING:
+    import cv2
+    import numpy as np
 
 from .hardware_config import hardware_config
 
@@ -29,7 +38,7 @@ from .hardware_config import hardware_config
 @dataclass
 class FrameData:
     """帧数据容器"""
-    frame: 'np.ndarray'
+    frame: np.ndarray
     timestamp: float
     frame_number: int
 
