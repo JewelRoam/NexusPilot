@@ -10,108 +10,68 @@ control:
   emergency_brake_distance: 3.0
   max_steering_angle: 70.0
   pid:
-    steering:
-      kd: 0.1
-      ki: 0.0
-      kp: 1.0
-    throttle:
-      kd: 0.01
-      ki: 0.05
-      kp: 0.8
+    steering: {kd: 0.05, ki: 0.0, kp: 0.8}
+    throttle: {kd: 0.01, ki: 0.1, kp: 0.5}
 cooperation:
   communication:
     dropout_rate: 0.0
     max_latency_ms: 100
-    protocol: ros2_topic
+    protocol: socket # Standard for direct RPi-PC V2V
   enabled: true
   message_frequency: 10
-  num_cooperative_vehicles: 2
-  # Distance-aware coordination parameters
-  coordination_range: 50.0        # Max range for coordination (meters)
-  active_coordination_range: 30.0 # Active coordination range (meters)
-  warning_range: 15.0             # Warning/critical range (meters)
-  scenarios:
-  - intersection_coordination
-  - occlusion_compensation
-  - platooning
-  - deadlock_resolution
-dashboard:
-  enabled: true
-  show_apf_field: true
-  show_bev: true
-  show_cooperation_info: true
-  show_detections: true
-  window_size:
-  - 1280
-  - 720
+  coordination_range: 50.0
+  active_coordination_range: 30.0
+  warning_range: 15.0
 depth:
   max_distance: 100.0
   source: carla_depth_camera
-ego_vehicle:
-  blueprint_filter: vehicle.tesla.model3
-  spawn_index: null
 logging:
   level: INFO
   output_dir: output/
   save_metrics: true
   save_video: false
 perception:
+  use_onnx: true           # Optimized for RPi 5
+  use_openvino: false      # Set to true if openvino model is present
+  imgsz: 320               # High FPS tradeoff
   confidence_threshold: 0.4
-  cyclist_classes:
-  - 1
-  imgsz: 416
-  model_path: model/yolov8n.pt
   onnx_model_path: model/yolo11n.onnx
-  pedestrian_classes:
-  - 0
-  traffic_sign_classes:
-  - 9
-  - 11
-  - 12
-  use_onnx: false
-  vehicle_classes:
-  - 2
-  - 3
-  - 5
-  - 7
+  openvino_model_path: model/yolo11n_openvino
+  vehicle_classes: [2, 3, 5, 7]
+  pedestrian_classes: [0]
+  cyclist_classes: [1]
+  traffic_sign_classes: [9, 11, 12]
 planning:
   apf:
-    d0: 22.823080936862695
-    emergency_distance: 4.247641618211044
+    # Optimized values from Chapter 4 analysis
+    k_attractive: 1.5
+    k_repulsive: 180.0
+    k_rotational: 40.0
+    d0: 15.0
+    emergency_distance: 3.0
     goal_tolerance: 5.0
-    k_attractive: 2.022154332201987
-    k_repulsive: 144.8956513173414
-    max_speed: 23.16680589002507
+    max_speed: 15.0        # Safe speed for indoor demo
     min_speed: 5.0
   path_smoothing:
-    bezier_order: 5
     smoothing_factor: 0.3
 raspberry_pi:
-  host: 192.168.1.100
-  motor_control:
-    max_speed_pwm: 100
-    turn_speed_pwm: 60
-    type: pwm
-  ros2_domain_id: 0
-  ssh_port: 22
+  # Hardware Pins - Synced with rpi_deploy/hardware_config.py
   ultrasonic:
-    echo_pin: 24
-    emergency_distance: 0.15
-    trigger_pin: 23
+    trigger_pin: 20
+    echo_pin: 21
+    emergency_distance: 0.25 # 25cm
+  motor_control:
+    base_pwm: 0.30          # Overcome static friction
+    max_speed_pwm: 0.80
+    left_pins: [22, 27, 18] # forward, backward, enable
+    right_pins: [25, 24, 23]
+  servo_control:
+    pca9685_address: 0x40
+    ultrasonic_channel: 0
+    camera_pan_channel: 1
+    camera_tilt_channel: 2
 sensors:
-  depth_camera:
-    fov: 110
-    image_size_x: 1280
-    image_size_y: 720
-    position:
-    - 1.5
-    - 0.0
-    - 2.4
   rgb_camera:
     fov: 110
-    image_size_x: 1280
-    image_size_y: 720
-    position:
-    - 1.5
-    - 0.0
-    - 2.4
+    image_size_x: 640
+    image_size_y: 480

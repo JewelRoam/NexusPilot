@@ -56,7 +56,11 @@ class V2VMessage:
         d = {
             "timestamp": self.timestamp,
             "vehicle_id": self.vehicle_id,
-            "position": list(self.position),
+            "pose": {
+                "x": float(self.position[0]),
+                "y": float(self.position[1]),
+                "yaw": float(self.position[2])
+            },
             "velocity": list(self.velocity),
             "detections": [det.to_dict() for det in self.detections],
             "intent": self.intent,
@@ -67,13 +71,16 @@ class V2VMessage:
 
     @classmethod
     def from_json(cls, json_str: str) -> 'V2VMessage':
+        if len(json_str) > 65536: # Size safety
+            raise ValueError("V2V Message too large")
         d = json.loads(json_str)
         detections = [SharedDetection.from_dict(det) for det in d.get("detections", [])]
+        pose = d.get("pose", {})
         return cls(
             timestamp=d["timestamp"],
             vehicle_id=d["vehicle_id"],
-            position=tuple(d["position"]),
-            velocity=tuple(d["velocity"]),
+            position=(pose.get("x", 0.0), pose.get("y", 0.0), pose.get("yaw", 0.0)),
+            velocity=tuple(d.get("velocity", [0.0, 0.0])),
             detections=detections,
             intent=d.get("intent", "cruising"),
             confidence=d.get("confidence", 1.0),
