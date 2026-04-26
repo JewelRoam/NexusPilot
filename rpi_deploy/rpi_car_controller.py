@@ -119,11 +119,6 @@ def main():
     cached_apf_obs = []
     yolo_frame_count = 0
 
-    # Ultrasonic scan cache for WARNING zone when YOLO is blind
-    last_scan_time = 0
-    cached_scan_steer = 0.0
-    SCAN_CACHE_TTL = 0.8  # Re-scan every ~0.8s in WARNING zone
-
     try:
         while True:
             loop_start = time.perf_counter()
@@ -145,7 +140,7 @@ def main():
 
             # ---- Read camera (only on YOLO frames or GUI frames) ----
             frame = None
-            run_yolo = (yolo_frame_count % YOLO_FRAME_INTERVAL == 0) and state == STATE_CRUISE
+            run_yolo = (yolo_frame_count % YOLO_FRAME_INTERVAL == 0) and state != STATE_AVOID
 
             if run_yolo or not args.headless:
                 ret, frame = cap.read()
@@ -193,26 +188,16 @@ def main():
                         last_log_time = time.time()
 
                 elif front_dist < WARNING_DIST:
-                    # WARNING: obstacle ahead, steer away
+                    # WARNING: obstacle ahead, steer away using YOLO screen-side bias
                     out = planner.compute(0, 0, 0, 5.0, 3.0, 0, cached_apf_obs)
                     steer = out.target_steering * 0.6
 
                     if abs(steer) < 0.05 and cached_apf_obs:
-                        # YOLO sees something → screen-side bias
                         closest = min(cached_apf_obs, key=lambda o: o.distance)
                         if closest.y > 0.05:
                             steer = -0.4
                         elif closest.y < -0.05:
                             steer = 0.4
-                        else:
-                            steer = _warning_scan_steer(ultrasonic, servo)
-                    elif abs(steer) < 0.05 and not cached_apf_obs:
-                        # YOLO is blind → use cached ultrasonic scan
-                        now = time.time()
-                        if now - last_scan_time > SCAN_CACHE_TTL:
-                            cached_scan_steer = _warning_scan_steer(ultrasonic, servo)
-                            last_scan_time = now
-                        steer = cached_scan_steer
 
                     motor.curve_move(CRUISE_SPEED * 0.4, steer)
                     if time.time() - last_log_time > 1.5:
@@ -340,21 +325,6 @@ def _scan_right(sensor: UltrasonicSensor, servo: ServoController) -> float:
     time.sleep(SERVO_SETTLE)
     reading = sensor.measure_once()
     return reading.distance_cm if reading.valid else 999.0
-
-
-def _warning_scan_steer(sensor: UltrasonicSensor, servo: ServoController) -> float:
-    """One-shot servo scan for WARNING zone when obstacle is dead center.
-    Returns steer value: negative=left, positive=right, 0=undecided."""
-    dis_left = _scan_left(sensor, servo)
-    dis_right = _scan_right(sensor, servo)
-    servo.center_ultrasonic()
-    time.sleep(SERVO_SETTLE)
-    if dis_left > dis_right + 10:
-        return -0.4
-    elif dis_right > dis_left + 10:
-        return 0.4
-    return 0.0
-
 
 # ---- Overlay Drawing ----
 
