@@ -82,8 +82,6 @@ def main():
     cap.set(cv2.CAP_PROP_FRAME_HEIGHT, CAM_HEIGHT)
     # Reduce camera FPS to save CPU
     cap.set(cv2.CAP_PROP_FPS, 15)
-    # Limit buffer to 1 frame — prevents stale frame accumulation and capture hangs
-    cap.set(cv2.CAP_PROP_BUFFERSIZE, 1)
 
     # ---- AI Init ----
     print("[INIT] Loading YOLO11n ONNX...")

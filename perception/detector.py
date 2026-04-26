@@ -353,9 +353,14 @@ class YOLODetector:
         use_onnx = config.get("use_onnx", False)
 
         if use_onnx and ORT_AVAILABLE:
-            print("[YOLODetector] Using ONNX Runtime backend (memory-safe)")
-            self._backend = ONNXRuntimeDetector(config)
-            self._use_ort = True
+            try:
+                print("[YOLODetector] Using ONNX Runtime backend (memory-safe)")
+                self._backend = ONNXRuntimeDetector(config)
+                self._use_ort = True
+            except Exception as e:
+                print(f"[WARNING] ONNX Runtime init failed: {e}. Falling back to ultralytics.")
+                self._load_ultralytics()
+                self._use_ort = False
         else:
             if use_onnx and not ORT_AVAILABLE:
                 print("[WARNING] use_onnx=True but onnxruntime not installed. Falling back to ultralytics.")
@@ -383,7 +388,11 @@ class YOLODetector:
 
     def detect(self, image: np.ndarray) -> List[DetectedObject]:
         if self._use_ort:
-            return self._backend.detect(image)
+            try:
+                return self._backend.detect(image)
+            except Exception as e:
+                print(f"[YOLODetector] ONNX Runtime detect error: {e}")
+                return []
 
         # Ultralytics path (fallback)
         current_time = time.perf_counter()
