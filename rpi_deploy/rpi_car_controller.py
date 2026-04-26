@@ -26,8 +26,8 @@ from rpi_deploy.servo_controller import ServoController
 # ---- Constants ----
 
 # Ultrasonic thresholds (cm)
-EMERGENCY_DIST = 12.0      # Hard stop
-OBSTACLE_DIST = 30.0       # Trigger scan + avoidance
+EMERGENCY_DIST = 10.0      # Hard stop
+OBSTACLE_DIST = 20.0       # Trigger scan + avoidance
 WARNING_DIST = 60.0        # Slow down, APF steering
 
 # Speed settings (0.0-1.0 gpiozero scale)
