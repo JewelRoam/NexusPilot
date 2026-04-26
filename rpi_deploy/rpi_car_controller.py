@@ -33,9 +33,9 @@ WARNING_DIST = 80.0        # Slow down + APF steering
 # Speed settings (0.0-1.0 gpiozero scale)
 CRUISE_SPEED = 0.2
 AVOID_BACKUP_SPEED = 0.3
-AVOID_TURN_SPEED = 0.3
-RECOVERY_BACKUP_DURATION = 0.5
-RECOVERY_TURN_DURATION = 1.0
+AVOID_TURN_SPEED = 0.2     # Gentle differential turn
+RECOVERY_BACKUP_DURATION = 0.3
+RECOVERY_TURN_DURATION = 0.6  # ~90° arc, not 180° spin
 
 # Servo settle time (seconds)
 SERVO_SETTLE = 0.4
@@ -220,6 +220,7 @@ def main():
 
                 # Step 3: Decide direction
                 if dis_left < OBSTACLE_DIST and dis_right < OBSTACLE_DIST:
+                    # Both sides blocked -> spin out as last resort
                     if consecutive_blocked >= 3:
                         print("[RECOVER] Both blocked x3, spinning out")
                         motor.rotate_left(AVOID_TURN_SPEED)
@@ -230,25 +231,28 @@ def main():
                     else:
                         print(f"[RECOVER] Both blocked L={dis_left:.0f} R={dis_right:.0f}, spin")
                         motor.rotate_left(AVOID_TURN_SPEED)
-                        time.sleep(1.0)
+                        time.sleep(0.8)
                         motor.stop()
                         state = STATE_CRUISE
                 elif dis_left > dis_right:
+                    # More room on the left -> gentle forward-left turn
                     avoid_action = "left"
                     print(f"[AVOID] Turn LEFT (L={dis_left:.0f} > R={dis_right:.0f})")
                     state = STATE_AVOID
                     avoid_start_time = time.time()
                 else:
+                    # More room on the right -> gentle forward-right turn
                     avoid_action = "right"
                     print(f"[AVOID] Turn RIGHT (R={dis_right:.0f} > L={dis_left:.0f})")
                     state = STATE_AVOID
                     avoid_start_time = time.time()
 
             elif state == STATE_AVOID:
+                # Execute gentle forward turn (not in-place spin)
                 if avoid_action == "left":
-                    motor.rotate_left(AVOID_TURN_SPEED)
+                    motor.turn_left(AVOID_TURN_SPEED)
                 else:
-                    motor.rotate_right(AVOID_TURN_SPEED)
+                    motor.turn_right(AVOID_TURN_SPEED)
 
                 elapsed = time.time() - avoid_start_time
                 if elapsed >= RECOVERY_TURN_DURATION:
