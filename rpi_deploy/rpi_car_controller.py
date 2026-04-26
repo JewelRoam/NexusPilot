@@ -38,7 +38,7 @@ RECOVERY_BACKUP_DURATION = 0.3
 RECOVERY_TURN_DURATION = 0.6  # ~90° arc, not 180° spin
 
 # Servo settle time (seconds)
-SERVO_SETTLE = 0.4
+SERVO_SETTLE = 0.25
 
 # Camera
 CAM_WIDTH = 320
@@ -82,6 +82,8 @@ def main():
     cap.set(cv2.CAP_PROP_FRAME_HEIGHT, CAM_HEIGHT)
     # Reduce camera FPS to save CPU
     cap.set(cv2.CAP_PROP_FPS, 15)
+    # Limit buffer to 1 frame — prevents stale frame accumulation and capture hangs
+    cap.set(cv2.CAP_PROP_BUFFERSIZE, 1)
 
     # ---- AI Init ----
     print("[INIT] Loading YOLO11n ONNX...")
@@ -169,6 +171,11 @@ def main():
                     ))
 
             yolo_frame_count += 1
+
+            # Prune stale track IDs from dist_buffer (tracker already cleaned them)
+            if yolo_frame_count % 30 == 0:
+                active_ids = {det.track_id for det in cached_detections if det.track_id > 0}
+                dist_buffer = {tid: v for tid, v in dist_buffer.items() if tid in active_ids}
 
             # ---- State Machine ----
             front_dist = u_res.distance_cm if u_res.valid else 999.0
