@@ -158,11 +158,6 @@ def main():
                 cached_detections = detector.detect(rgb)
                 obstacles = detector.get_obstacles(cached_detections)
 
-                # Debug: print what YOLO actually sees (every 3 seconds)
-                if cached_detections and time.time() - last_log_time > 3.0:
-                    det_summary = [f"{d.class_name}({d.category})" for d in cached_detections[:5]]
-                    print(f"[DEBUG] YOLO sees: {det_summary} -> obstacles:{len(obstacles)}")
-
                 # Rebuild APF obstacle list (cached until next YOLO frame)
                 cached_apf_obs = []
                 for det in obstacles:

@@ -277,7 +277,7 @@ class ONNXRuntimeDetector:
         return self.tracker.update(detections, dt)
 
     def get_obstacles(self, detections: List[DetectedObject]) -> List[DetectedObject]:
-        return [d for d in detections if d.category in {"vehicle", "pedestrian", "cyclist"}]
+        return detections
 
     @property
     def avg_inference_ms(self) -> float:
@@ -424,9 +424,7 @@ class YOLODetector:
         return self.tracker.update(detections, dt)
 
     def get_obstacles(self, detections: List[DetectedObject]) -> List[DetectedObject]:
-        if self._use_ort:
-            return self._backend.get_obstacles(detections)
-        return [d for d in detections if d.category in {"vehicle", "pedestrian", "cyclist"}]
+        return detections
 
     @property
     def avg_inference_ms(self) -> float:
