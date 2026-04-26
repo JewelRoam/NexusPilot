@@ -1,18 +1,16 @@
 """
 NexusPilot: Professional RPi Car Controller
-- Integrated Hardware Self-Test
-- Dual-mode support (Headless/GUI)
-- RPi 5 GPIO & Metadata Fail-safes
+Fixed import ordering to prevent RPi 5 system hangs.
 """
 import os
+# CRITICAL: LG_CHIP must be set BEFORE any hardware library imports
+os.environ["LG_CHIP"] = "0"
+
 import sys
 import time
 import argparse
 import cv2
 import numpy as np
-
-# Force RPi 5 GPIO chip index
-os.environ["LG_CHIP"] = "0"
 
 # Path setup
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
@@ -24,33 +22,27 @@ from rpi_deploy.ultrasonic_sensor import UltrasonicSensor
 
 def main():
     parser = argparse.ArgumentParser()
-    parser.add_argument("--headless", action="store_true", help="Run without X11 window display")
+    parser.add_argument("--headless", action="store_true")
     args = parser.parse_args()
 
     # 1. Hardware Init
-    print("[INIT] Starting Hardware Self-Test...")
+    print("[INIT] Booting Hardware Subsystems...")
     motor = MotorController()
     ultrasonic = UltrasonicSensor()
     
-    # --- PHYSICAL SELF-TEST ---
-    # Quick pulse to verify motor health
+    # Quick pulse for confirmation
     motor.curve_move(0.4, 0.0)
     time.sleep(0.2)
     motor.stop()
-    print("[INIT] Hardware Check: OK.")
 
     # 2. Camera Init
     cap = cv2.VideoCapture(0)
-    if not cap.isOpened():
-        print("[ERROR] Could not open camera device.")
-        return
     cap.set(cv2.CAP_PROP_FRAME_WIDTH, 320)
     cap.set(cv2.CAP_PROP_FRAME_HEIGHT, 320)
 
     # 3. Software Init
-    print("[INIT] Loading AI Brain (YOLOv11n ONNX)...")
-    detector = YOLODetector({"use_onnx": True, "imgsz": 320, "confidence_threshold": 0.4})
-    
+    print("[INIT] Loading YOLOv11n (approx. 5s)...")
+    detector = YOLODetector({"onnx_model_path": "model/yolo11n.onnx", "imgsz": 320})
     planner = APFPlanner({
         "k_attractive": 1.5,
         "k_repulsive": 180.0,
@@ -59,35 +51,29 @@ def main():
         "max_speed": 10.0
     })
 
-    # --- INFERENCE WARMUP ---
-    print("[INIT] Pre-heating inference engine...")
-    dummy_img = np.zeros((320, 320, 3), dtype=np.uint8)
-    detector.detect(dummy_img)
+    # Warmup
+    detector.detect(np.zeros((320, 320, 3), dtype=np.uint8))
     
     print("\n" + "="*40)
-    print(" NEXUSPILOT: READY FOR MISSION ")
+    print(" NEXUSPILOT: READY ")
     print("="*40)
     
-    BASE_PWM = 0.32
+    BASE_PWM = 0.35
     dist_buffer = {}
     last_log_time = 0
-    target_fps = 15
-    frame_interval = 1.0 / target_fps
 
     try:
         while True:
             loop_start = time.perf_counter()
 
-            # --- Safety Layer 1: Ultrasonic Lock ---
             u_res = ultrasonic.measure_once()
             if u_res.valid and u_res.distance_cm < 15.0:
                 motor.emergency_stop()
-                if time.time() - last_log_time > 1.5:
+                if time.time() - last_log_time > 2.0:
                     print(f"!! SAFETY LOCK: {u_res.distance_cm:.1f}cm")
                     last_log_time = time.time()
                 continue
 
-            # --- Layer 2: Perception ---
             ret, frame = cap.read()
             if not ret: continue
             
@@ -102,46 +88,30 @@ def main():
                 if tid not in dist_buffer: dist_buffer[tid] = raw_dist
                 dist_buffer[tid] = 0.7 * dist_buffer[tid] + 0.3 * raw_dist
                 
-                corrected_x = dist_buffer[tid] + 0.12
-                lateral = (det.center[0] - 160) / 160.0 * corrected_x * 0.55
-                apf_obs_list.append(Obstacle(x=corrected_x, y=lateral, distance=corrected_x, category=det.category))
+                cx = dist_buffer[tid] + 0.12
+                cy = (det.center[0] - 160) / 160.0 * cx * 0.55
+                apf_obs_list.append(Obstacle(x=cx, y=cy, distance=cx, category=det.category))
 
-            # --- Layer 3: Planning ---
-            out = planner.compute(0, 0, 0, 8.0, 3.0, 0, apf_obs_list)
+            out = planner.compute(0, 0, 0, 8.0, 2.5, 0, apf_obs_list)
 
-            # --- Layer 4: Control & Deadband Compensation ---
-            if out.emergency_brake or out.status == "emergency":
+            if out.status == "emergency" or out.emergency_brake:
                 motor.stop()
             elif out.status == "recovering":
                 motor.move_backward(0.4)
             else:
-                # Map target_speed to PWM scale
-                speed_scale = out.target_speed / 10.0
-                clamped_pwm = speed_scale * (1.0 - BASE_PWM) + BASE_PWM
-                
-                if out.target_speed < 0.1:
-                    motor.stop()
-                else:
-                    motor.curve_move(clamped_pwm, out.target_steering)
-                    if time.time() - last_log_time > 1.5:
-                        print(f"[RUN] Mode: {out.status} | PWM: {clamped_pwm:.2f} | Dist: {u_res.distance_cm:.1f}cm")
-                        last_log_time = time.time()
+                pwm = (out.target_speed / 10.0) * (1.0 - BASE_PWM) + BASE_PWM
+                if out.target_speed < 0.1: motor.stop()
+                else: motor.curve_move(pwm, out.target_steering)
 
-            # --- Visuals ---
             if not args.headless:
-                for det in detections:
-                    cv2.rectangle(frame, (det.bbox[0], det.bbox[1]), (det.bbox[2], det.bbox[3]), (0,255,0), 2)
-                cv2.putText(frame, out.status, (10,30), cv2.FONT_HERSHEY_SIMPLEX, 0.7, (0,0,255), 2)
-                cv2.imshow("Security Monitor", frame)
+                cv2.imshow("Monitor", frame)
                 if cv2.waitKey(1) & 0xFF == ord('q'): break
 
-            # Stability: Throttle FPS
             elapsed = time.perf_counter() - loop_start
-            if elapsed < frame_interval:
-                time.sleep(frame_interval - elapsed)
+            if elapsed < 0.066: time.sleep(0.066 - elapsed)
 
     except KeyboardInterrupt:
-        print("\n[SHUTDOWN] Manual halt received.")
+        print("\nStopping...")
     finally:
         motor.cleanup()
         cap.release()
