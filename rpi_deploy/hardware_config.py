@@ -33,7 +33,7 @@ class UltrasonicConfig:
     servo_channel: int = 0  # PCA9685 channel
     min_angle: int = 0      # Minimum angle
     max_angle: int = 180    # Maximum angle
-    center_angle: int = 90  # Center position
+    center_angle: int = 120  # Center position (physical offset: 90° was too far right)
 
 
 @dataclass
@@ -99,7 +99,7 @@ class ControlConfig:
     warning_distance_cm: float = 50.0  # Warning distance
     
     # Scanning parameters
-    scan_angles: Tuple[int, ...] = (0, 45, 90, 135, 180)  # Scan angle sequence
+    scan_angles: Tuple[int, ...] = (30, 75, 120, 165, 180)  # Scan angles (centered at 120°)
     scan_delay: float = 0.3      # Delay for each scan step
 
 

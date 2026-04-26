@@ -133,15 +133,15 @@ class ObstacleAvoidanceController:
         return self.distance_front_cm()
 
     def scan_left_cm(self) -> float:
-        """Point ultrasonic left (~175°) and measure (cm)."""
-        self.servo.set_ultrasonic_angle(175)
+        """Point ultrasonic left (~155°) and measure (cm)."""
+        self.servo.set_ultrasonic_angle(155)
         time.sleep(SERVO_SETTLE_TIME)
         dist = self.distance_front_cm()
         return dist
 
     def scan_right_cm(self) -> float:
-        """Point ultrasonic right (~5°) and measure (cm)."""
-        self.servo.set_ultrasonic_angle(5)
+        """Point ultrasonic right (~85°) and measure (cm)."""
+        self.servo.set_ultrasonic_angle(85)
         time.sleep(SERVO_SETTLE_TIME)
         dist = self.distance_front_cm()
         return dist

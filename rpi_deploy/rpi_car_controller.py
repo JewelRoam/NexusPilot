@@ -286,16 +286,16 @@ def main():
 # ---- Servo Scan Helpers ----
 
 def _scan_left(sensor: UltrasonicSensor, servo: ServoController) -> float:
-    """Scan left (~175 degrees) and return distance in cm."""
-    servo.set_ultrasonic_angle(175)
+    """Scan left (~155 degrees) and return distance in cm."""
+    servo.set_ultrasonic_angle(155)
     time.sleep(SERVO_SETTLE)
     reading = sensor.measure_once()
     return reading.distance_cm if reading.valid else 999.0
 
 
 def _scan_right(sensor: UltrasonicSensor, servo: ServoController) -> float:
-    """Scan right (~5 degrees) and return distance in cm."""
-    servo.set_ultrasonic_angle(5)
+    """Scan right (~85 degrees) and return distance in cm."""
+    servo.set_ultrasonic_angle(85)
     time.sleep(SERVO_SETTLE)
     reading = sensor.measure_once()
     return reading.distance_cm if reading.valid else 999.0
