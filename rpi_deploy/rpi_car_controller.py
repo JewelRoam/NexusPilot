@@ -28,7 +28,7 @@ from rpi_deploy.servo_controller import ServoController
 # Ultrasonic thresholds (cm)
 EMERGENCY_DIST = 10.0      # Hard stop
 OBSTACLE_DIST = 40.0       # Trigger servo scan + avoidance (close range)
-WARNING_DIST = 100.0       # Early APF steering to avoid obstacles proactively
+WARNING_DIST = 80.0        # Servo-scan based proactive avoidance (YOLO unreliable alone)
 
 # Speed settings (0.0-1.0 gpiozero scale)
 CRUISE_SPEED = 0.2
@@ -183,24 +183,47 @@ def main():
                         last_log_time = time.time()
 
                 elif front_dist < WARNING_DIST:
-                    # Warning zone -> proactive APF avoidance steering
-                    out = planner.compute(0, 0, 0, 5.0, 3.0, 0, cached_apf_obs)
-                    steer = out.target_steering * 0.7  # Stronger avoidance
+                    # WARNING: obstacle ahead. APF alone won't steer if YOLO misses.
+                    # Scan left/right with servo to find clearance, then steer that way.
+                    dis_left = _scan_left(ultrasonic, servo)
+                    dis_right = _scan_right(ultrasonic, servo)
+                    servo.center_ultrasonic()
+                    time.sleep(SERVO_SETTLE)
+
+                    # Choose avoidance direction
+                    if dis_left > dis_right + 10:  # Left has 10cm+ more room
+                        steer = -0.5  # steer left
+                    elif dis_right > dis_left + 10:  # Right has 10cm+ more room
+                        steer = 0.5   # steer right
+                    else:
+                        steer = 0.0   # no clear preference
+
                     motor.curve_move(CRUISE_SPEED * 0.4, steer)
-                    if time.time() - last_log_time > 2.0:
-                        print(f"[WARN] Front: {front_dist:.1f}cm, steer={steer:.2f}")
+                    if time.time() - last_log_time > 1.5:
+                        print(f"[WARN] F={front_dist:.0f} L={dis_left:.0f} R={dis_right:.0f} steer={steer:.1f}")
                         last_log_time = time.time()
 
                 else:
-                    # Clear -> forward with APF fine-tuning
+                    # Clear -> forward with APF steering + screen-side bias
                     out = planner.compute(0, 0, 0, 8.0, 3.0, 0, cached_apf_obs)
+                    steer = out.target_steering * 0.4
+
+                    # If APF gives no steering but YOLO sees obstacles,
+                    # steer away from the most prominent detection's screen side
+                    if abs(steer) < 0.05 and cached_apf_obs:
+                        closest = min(cached_apf_obs, key=lambda o: o.distance)
+                        if closest.y > 0.05:
+                            steer = -0.3  # obstacle on right → steer left
+                        elif closest.y < -0.05:
+                            steer = 0.3   # obstacle on left → steer right
+
                     if not out.emergency_brake and out.target_speed > 0.1:
-                        motor.curve_move(CRUISE_SPEED, out.target_steering * 0.4)
+                        motor.curve_move(CRUISE_SPEED, steer)
                     else:
                         motor.stop()
 
                     if time.time() - last_log_time > 3.0:
-                        print(f"[CRUISE] Front: {front_dist:.1f}cm | Det: {len(cached_apf_obs)}")
+                        print(f"[CRUISE] Front: {front_dist:.1f}cm | Det: {len(cached_apf_obs)} | steer={steer:.2f}")
                         last_log_time = time.time()
 
             elif state == STATE_BLOCKED:
