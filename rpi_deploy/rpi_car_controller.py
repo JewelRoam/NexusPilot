@@ -27,8 +27,8 @@ from rpi_deploy.servo_controller import ServoController
 
 # Ultrasonic thresholds (cm)
 EMERGENCY_DIST = 10.0      # Hard stop
-OBSTACLE_DIST = 40.0       # Trigger servo scan + avoidance (primary obstacle detection)
-WARNING_DIST = 80.0        # Slow down + APF steering
+OBSTACLE_DIST = 40.0       # Trigger servo scan + avoidance (close range)
+WARNING_DIST = 100.0       # Early APF steering to avoid obstacles proactively
 
 # Speed settings (0.0-1.0 gpiozero scale)
 CRUISE_SPEED = 0.2
@@ -183,10 +183,10 @@ def main():
                         last_log_time = time.time()
 
                 elif front_dist < WARNING_DIST:
-                    # Warning zone -> slow down + APF gentle steering
+                    # Warning zone -> proactive APF avoidance steering
                     out = planner.compute(0, 0, 0, 5.0, 3.0, 0, cached_apf_obs)
-                    steer = out.target_steering * 0.4
-                    motor.curve_move(CRUISE_SPEED * 0.6, steer)
+                    steer = out.target_steering * 0.7  # Stronger avoidance
+                    motor.curve_move(CRUISE_SPEED * 0.4, steer)
                     if time.time() - last_log_time > 2.0:
                         print(f"[WARN] Front: {front_dist:.1f}cm, steer={steer:.2f}")
                         last_log_time = time.time()
@@ -195,7 +195,7 @@ def main():
                     # Clear -> forward with APF fine-tuning
                     out = planner.compute(0, 0, 0, 8.0, 3.0, 0, cached_apf_obs)
                     if not out.emergency_brake and out.target_speed > 0.1:
-                        motor.curve_move(CRUISE_SPEED, out.target_steering * 0.3)
+                        motor.curve_move(CRUISE_SPEED, out.target_steering * 0.4)
                     else:
                         motor.stop()
 
