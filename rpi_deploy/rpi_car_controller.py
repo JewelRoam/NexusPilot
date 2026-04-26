@@ -96,10 +96,14 @@ def main():
             elif out.status == "recovering":
                 motor.move_backward(0.4)
             else:
-                speed_req = out.target_speed / 10.0
                 clamped_speed = speed_req * (1.0 - BASE_PWM) + BASE_PWM
-                if out.target_speed < 0.1: motor.stop()
-                else: motor.curve_move(clamped_speed, out.target_steering)
+                if out.target_speed < 0.1: 
+                    motor.stop()
+                else: 
+                    if time.time() - last_move_log_time > 2.0:
+                        print(f"[MOVE] PWM:{clamped_speed:.2f} Steer:{out.target_steering:.2f} Status:{out.status}")
+                        last_move_log_time = time.time()
+                    motor.curve_move(clamped_speed, out.target_steering)
 
             # --- FPS Throttling (Keep System Stable) ---
             if not args.headless:
