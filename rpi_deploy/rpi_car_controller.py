@@ -46,8 +46,8 @@ CAM_HEIGHT = 320
 CAM_CENTER_X = CAM_WIDTH / 2.0
 
 # YOLO inference throttling: run detection every N frames
-YOLO_FRAME_INTERVAL = 4    # ~3 FPS at 12 Hz main loop
-YOLO_CONFIDENCE_THRESHOLD = 0.45  # Higher threshold = fewer detections = less CPU
+YOLO_FRAME_INTERVAL = 2    # ~6 FPS at 12 Hz main loop
+YOLO_CONFIDENCE_THRESHOLD = 0.3  # Lower threshold for better detection rate
 
 # Main loop target: 12 Hz (ultrasonic-only frames are ~80 µs, YOLO frames are ~200 ms)
 MAIN_LOOP_INTERVAL = 0.083  # ~12 FPS for ultrasonic safety checks
