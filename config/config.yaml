@@ -47,10 +47,10 @@ perception:
   traffic_sign_classes: [9, 11, 12]
 planning:
   apf:
-    # Optimized values from Chapter 4 analysis
-    k_attractive: 1.5
-    k_repulsive: 180.0
-    k_rotational: 40.0
+    # Tuned for smooth steering — reduced repulsion to prevent overreaction
+    k_attractive: 2.0
+    k_repulsive: 80.0          # Was 180 — too aggressive, caused sharp turns
+    k_rotational: 20.0         # Was 40 — proportional reduction
     d0: 15.0
     emergency_distance: 3.0
     goal_tolerance: 5.0

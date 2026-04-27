@@ -40,13 +40,18 @@ class APFPlanner:
     def __init__(self, config: dict):
         # 1. Base APF Parameters
         self.k_att = config.get("k_attractive", 1.0)
-        self.k_rep = config.get("k_repulsive", 150.0)
-        self.k_rot = config.get("k_rotational", 40.0) # Rotational force strength
+        self.k_rep = config.get("k_repulsive", 80.0)
+        self.k_rot = config.get("k_rotational", 20.0)
         self.d0 = config.get("d0", 15.0)
         self.emergency_distance = config.get("emergency_distance", 3.0)
         self.max_speed = config.get("max_speed", 30.0)
         self.min_speed = config.get("min_speed", 5.0)
         self.goal_tolerance = config.get("goal_tolerance", 5.0)
+        self.steer_smoothing = config.get("steer_smoothing", 0.3)  # EMA factor
+
+        # Steering rate limiter
+        self._last_steer = 0.0
+        self._max_steer_delta = config.get("max_steer_delta", 0.15)  # per frame
 
         # 2. Ethical Weights for VRUs
         self._ethical_weights = {"pedestrian": 2.5, "cyclist": 2.0, "vehicle": 1.0}
@@ -170,7 +175,13 @@ class APFPlanner:
         ego_yaw_rad = math.radians(ego_yaw)
         angle_diff = math.atan2(math.sin(force_dir - ego_yaw_rad), math.cos(force_dir - ego_yaw_rad))
         
-        target_steering = np.clip(angle_diff / (math.pi/4), -1.0, 1.0)
+        raw_steer = np.clip(angle_diff / (math.pi/3), -1.0, 1.0)
+
+        # Smooth steering with exponential moving average + rate limit
+        smoothed = self.steer_smoothing * raw_steer + (1.0 - self.steer_smoothing) * self._last_steer
+        delta = np.clip(smoothed - self._last_steer, -self._max_steer_delta, self._max_steer_delta)
+        target_steering = self._last_steer + delta
+        self._last_steer = target_steering
         
         # Distance logic
         min_dist = min([obs.distance for obs in all_obs]) if all_obs else self.d0
