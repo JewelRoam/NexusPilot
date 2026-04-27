@@ -178,59 +178,47 @@ def draw_hud(image: np.ndarray, fps: float, planner_output, control_dict: dict,
     h, w = image.shape[:2]
 
     # --- Left panel: Detection info ---
-    panel_w, panel_h = 300, 200
+    panel_w, panel_h = 320, 240
     overlay = image.copy()
     cv2.rectangle(overlay, (10, 10), (10 + panel_w, 10 + panel_h), (0, 0, 0), -1)
     cv2.addWeighted(overlay, 0.7, image, 0.3, 0, image)
     cv2.rectangle(image, (10, 10), (10 + panel_w, 10 + panel_h), (0, 255, 0), 2)
 
-    y = 35
+    y = 30
     cv2.putText(image, "=== Perception-Planning-Control ===", (20, y),
                 cv2.FONT_HERSHEY_SIMPLEX, 0.5, (0, 255, 0), 1)
-    y += 25
+    y += 20
     if scenario:
         sc_color = {"easy": (0, 255, 0), "medium": (0, 165, 255), "hard": (0, 0, 255)}.get(scenario, (255, 255, 255))
         cv2.putText(image, f"Scenario: {scenario.upper()}", (20, y),
-                    cv2.FONT_HERSHEY_SIMPLEX, 0.5, sc_color, 2)
-        y += 20
-    cv2.putText(image, f"FPS: {fps:.1f}", (20, y),
-                cv2.FONT_HERSHEY_SIMPLEX, 0.5, (255, 255, 255), 1)
-    y += 20
-    cv2.putText(image, f"Speed: {vehicle_speed:.1f} km/h", (20, y),
-                cv2.FONT_HERSHEY_SIMPLEX, 0.5, (255, 255, 255), 1)
-    y += 20
-    cv2.putText(image, f"Vehicles: {detection_summary.get('vehicle', 0)}", (20, y),
-                cv2.FONT_HERSHEY_SIMPLEX, 0.5, (0, 255, 0), 1)
-    y += 20
-    cv2.putText(image, f"Pedestrians: {detection_summary.get('pedestrian', 0)}", (20, y),
-                cv2.FONT_HERSHEY_SIMPLEX, 0.5, (0, 0, 255), 1)
-    y += 20
-    cv2.putText(image, f"Cyclists: {detection_summary.get('cyclist', 0)}", (20, y),
-                cv2.FONT_HERSHEY_SIMPLEX, 0.5, (255, 165, 0), 1)
+                    cv2.FONT_HERSHEY_SIMPLEX, 0.45, sc_color, 1)
+        y += 17
+    cv2.putText(image, f"FPS: {fps:.1f}  Speed: {vehicle_speed:.1f} km/h", (20, y),
+                cv2.FONT_HERSHEY_SIMPLEX, 0.45, (255, 255, 255), 1)
+    y += 17
+    cv2.putText(image, f"Vehicles: {detection_summary.get('vehicle', 0)}  "
+                f"Peds: {detection_summary.get('pedestrian', 0)}  "
+                f"Cyclists: {detection_summary.get('cyclist', 0)}", (20, y),
+                cv2.FONT_HERSHEY_SIMPLEX, 0.45, (200, 200, 200), 1)
 
-    # --- Right panel: Planning & Control ---
+    # --- Planning & Control ---
     if planner_output:
-        y += 25
+        y += 20
         status_color = {
             "normal": (0, 255, 0),
             "avoiding": (0, 165, 255),
             "emergency": (0, 0, 255),
             "goal_reached": (255, 255, 0),
         }.get(planner_output.status, (255, 255, 255))
-
-        cv2.putText(image, f"Status: {planner_output.status.upper()}", (20, y),
-                    cv2.FONT_HERSHEY_SIMPLEX, 0.5, status_color, 2)
-        y += 20
-        cv2.putText(image, f"Nearest Obs: {planner_output.nearest_obstacle_dist:.1f}m", (20, y),
-                    cv2.FONT_HERSHEY_SIMPLEX, 0.5, (255, 255, 255), 1)
+        cv2.putText(image, f"Status: {planner_output.status.upper()}  "
+                    f"Nearest: {planner_output.nearest_obstacle_dist:.1f}m", (20, y),
+                    cv2.FONT_HERSHEY_SIMPLEX, 0.45, status_color, 1)
+        y += 17
 
     if control_dict:
-        y += 20
         cv2.putText(image, f"Throttle: {control_dict.get('throttle', 0):.2f}  "
-                    f"Brake: {control_dict.get('brake', 0):.2f}", (20, y),
-                    cv2.FONT_HERSHEY_SIMPLEX, 0.4, (200, 200, 200), 1)
-        y += 18
-        cv2.putText(image, f"Steer: {control_dict.get('steer', 0):.2f}", (20, y),
+                    f"Brake: {control_dict.get('brake', 0):.2f}  "
+                    f"Steer: {control_dict.get('steer', 0):.2f}", (20, y),
                     cv2.FONT_HERSHEY_SIMPLEX, 0.4, (200, 200, 200), 1)
 
     return image
@@ -253,8 +241,11 @@ def draw_detections(image: np.ndarray, detections, depth_estimator) -> np.ndarra
         if det.distance > 0:
             label += f" {det.distance:.1f}m"
 
-        cv2.putText(image, label, (x1, y1 - 8),
-                    cv2.FONT_HERSHEY_SIMPLEX, 0.45, color, 1)
+        # Draw label background for readability
+        (tw, th), _ = cv2.getTextSize(label, cv2.FONT_HERSHEY_SIMPLEX, 0.5, 1)
+        cv2.rectangle(image, (x1, y1 - th - 6), (x1 + tw, y1), color, -1)
+        cv2.putText(image, label, (x1, y1 - 4),
+                    cv2.FONT_HERSHEY_SIMPLEX, 0.5, (0, 0, 0), 1)
 
     return image
 

@@ -36,8 +36,8 @@ logging:
 perception:
   use_onnx: false            # Disabled: ONNX IR version mismatch on Python 3.7
   use_openvino: false        # Set to true if openvino model is present
-  imgsz: 320                 # High FPS tradeoff
-  confidence_threshold: 0.4
+  imgsz: 640                 # PC demo — prioritize detection quality over FPS
+  confidence_threshold: 0.3  # Lower threshold to catch more obstacles
   onnx_model_path: model/yolo11n.onnx
   pt_model_path: model/yolov8n.pt  # YOLOv8 works with ultralytics 8.0.x on Python 3.7
   openvino_model_path: model/yolo11n_openvino
@@ -77,5 +77,9 @@ raspberry_pi:
 sensors:
   rgb_camera:
     fov: 110
-    image_size_x: 640
-    image_size_y: 480
+    image_size_x: 1280
+    image_size_y: 720
+  depth_camera:
+    fov: 110
+    image_size_x: 1280
+    image_size_y: 720
