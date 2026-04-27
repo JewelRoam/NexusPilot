@@ -4,7 +4,7 @@ Tests the CooperativePlanner with simulated V2V messages at different distances.
 """
 import sys
 import os
-sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 from cooperation.cooperative_planner import CooperativePlanner
 from cooperation.v2v_message import V2VMessage, SharedDetection

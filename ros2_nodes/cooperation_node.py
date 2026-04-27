@@ -22,6 +22,7 @@ Parameters:
 import sys
 import os
 import json
+import math
 import threading
 from typing import Optional, Dict, Any
 
@@ -71,14 +72,9 @@ class CooperationNode(Node):
         
         # Initialize planner
         config = {
-            'vehicle_id': self.vehicle_id,
-            'cooperation': {
-                'enabled': self.get_parameter('enable_cooperation').value,
-                'mode': self.get_parameter('cooperation_mode').value,
-                'range': self.get_parameter('communication_range').value
-            }
+            'coordination_range': self.get_parameter('communication_range').value,
         }
-        self.planner = CooperativePlanner(config)
+        self.planner = CooperativePlanner(self.vehicle_id, config)
         
         # State
         self.current_pose = None
@@ -138,45 +134,51 @@ class CooperationNode(Node):
             self.goal_pose = msg
     
     def _v2v_in_callback(self, msg: String):
-        """Handle incoming V2V message."""
+        """Handle incoming V2V message - store for cooperative planning."""
         try:
             data = json.loads(msg.data)
             sender_id = data.get('vehicle_id')
-            
+
             if sender_id and sender_id != self.vehicle_id:
+                # Re-serialize as JSON string for V2VMessage.from_json()
+                v2v_msg = V2VMessage.from_json(json.dumps(data))
                 with self.state_lock:
-                    self.neighbor_vehicles[sender_id] = {
-                        'position': data.get('position'),
-                        'velocity': data.get('velocity'),
-                        'timestamp': self.get_clock().now().to_msg()
-                    }
-                
-                # Process message through cooperative planner
-                v2v_msg = V2VMessage.from_dict(data)
-                self.planner.process_v2v_message(v2v_msg)
-                
-        except json.JSONDecodeError as e:
+                    self.neighbor_vehicles[sender_id] = v2v_msg
+
+        except (json.JSONDecodeError, KeyError, ValueError) as e:
             self.get_logger().warn(f"Invalid V2V message: {e}")
     
     def _broadcast_state(self):
         """Broadcast ego vehicle state to neighbors."""
         with self.state_lock:
             pose = self.current_pose
-        
+
         if pose is None:
             return
-        
-        # Create V2V message
+
+        # Extract yaw from quaternion
+        q = pose.pose.orientation
+        yaw = math.degrees(math.atan2(
+            2.0 * (q.w * q.z + q.x * q.y),
+            1.0 - 2.0 * (q.y * q.y + q.z * q.z)
+        ))
+
+        # Build JSON matching V2VMessage.from_json() expected format
         msg_data = {
+            'timestamp': self.get_clock().now().nanoseconds / 1e9,
             'vehicle_id': self.vehicle_id,
-            'position': {
+            'pose': {
                 'x': pose.pose.position.x,
-                'y': pose.pose.position.y
+                'y': pose.pose.position.y,
+                'yaw': yaw
             },
-            'velocity': {'x': 0.0, 'y': 0.0},  # TODO: Get from twist
-            'timestamp': self.get_clock().now().to_msg().sec
+            'velocity': [0.0, yaw],  # [speed_kmh, heading_deg] — speed from twist TODO
+            'detections': [],
+            'intent': 'cruising',
+            'confidence': 1.0,
+            'cooperation_request': None
         }
-        
+
         # Publish
         ros_msg = String()
         ros_msg.data = json.dumps(msg_data)
@@ -187,42 +189,52 @@ class CooperationNode(Node):
         with self.state_lock:
             pose = self.current_pose
             goal = self.goal_pose
-            obstacles = self.local_obstacles.copy()
-            neighbors = self.neighbor_vehicles.copy()
-        
-        if pose is None or goal is None:
+            neighbors = dict(self.neighbor_vehicles)
+
+        if pose is None:
             return
-        
+
         try:
-            # Run cooperative planning
-            result = self.planner.plan_with_cooperation(
-                ego_position=(pose.pose.position.x, pose.pose.position.y),
-                goal_position=(goal.pose.position.x, goal.pose.position.y),
-                local_obstacles=obstacles,
-                neighbor_states=neighbors
+            ego_x = pose.pose.position.x
+            ego_y = pose.pose.position.y
+            q = pose.pose.orientation
+            ego_yaw = math.degrees(math.atan2(
+                2.0 * (q.w * q.z + q.x * q.y),
+                1.0 - 2.0 * (q.y * q.y + q.z * q.z)
+            ))
+            ego_speed = 0.0  # TODO: get from twist subscriber
+
+            # Run cooperative planning with correct API
+            decision = self.planner.process(
+                ego_x=ego_x,
+                ego_y=ego_y,
+                ego_yaw=ego_yaw,
+                ego_speed=ego_speed,
+                obstacles=[],
+                v2v_messages=neighbors,
             )
-            
-            # Publish cooperative path
+
+            # Publish cooperative path (based on decision)
             stamp = self.get_clock().now().to_msg()
             path = Path()
             path.header.stamp = stamp
             path.header.frame_id = 'map'
-            
-            if 'path' in result and result['path']:
-                for point in result['path']:
-                    pose_msg = PoseStamped()
-                    pose_msg.header = path.header
-                    pose_msg.pose.position.x = point[0]
-                    pose_msg.pose.position.y = point[1]
-                    path.poses.append(pose_msg)
-            
+
+            if goal is not None and decision.action in ("proceed", "slow_down"):
+                # Simple straight-line path toward goal
+                pose_msg = PoseStamped()
+                pose_msg.header = path.header
+                pose_msg.pose.position.x = goal.pose.position.x
+                pose_msg.pose.position.y = goal.pose.position.y
+                path.poses.append(pose_msg)
+
             self.path_pub.publish(path)
-            
+
             # Publish decision
-            decision = String()
-            decision.data = result.get('decision', 'proceed')
-            self.decision_pub.publish(decision)
-            
+            decision_msg = String()
+            decision_msg.data = decision.action
+            self.decision_pub.publish(decision_msg)
+
         except Exception as e:
             self.get_logger().error(f"Cooperation error: {e}")
 

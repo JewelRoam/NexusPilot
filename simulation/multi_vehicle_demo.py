@@ -18,6 +18,7 @@ import time
 import yaml
 import cv2
 import math
+import random
 import traceback
 import numpy as np
 
@@ -192,6 +193,7 @@ class CooperativeVehicleAgent:
         self._ego_yaw = ego_yaw
         self._ego_speed = ego_speed
         self._obstacles_det = obstacles_det
+        self._latest_rgb = rgb_image
 
     def step_with_v2v(self):
         """
@@ -200,6 +202,7 @@ class CooperativeVehicleAgent:
         """
         # Receive V2V messages from other vehicles
         v2v_messages = self.v2v_comm.receive_all()
+        self._last_v2v_messages = v2v_messages  # Store for BEV visualization
 
         # COOPERATIVE PLANNING - Process V2V info
         self.latest_coop_decision = self.coop_planner.process(
@@ -255,59 +258,344 @@ class CooperativeVehicleAgent:
         return "cruising"
 
 
-def draw_bird_eye_view(agents: list, bev_size: int = 300, scale: float = 2.0) -> np.ndarray:
-    """Draw a simple bird's eye view showing vehicle positions and cooperation."""
+def _draw_arrow(img, p1, p2, color, thickness=2, tip_len=10, tip_angle=25):
+    """Draw an arrow from p1 to p2 with an arrowhead."""
+    cv2.line(img, p1, p2, color, thickness)
+    angle = math.atan2(p2[1] - p1[1], p2[0] - p1[0])
+    rad = math.radians(tip_angle)
+    p3 = (p2[0] - int(tip_len * math.cos(angle - rad)),
+          p2[1] - int(tip_len * math.sin(angle - rad)))
+    p4 = (p2[0] - int(tip_len * math.cos(angle + rad)),
+          p2[1] - int(tip_len * math.sin(angle + rad)))
+    cv2.fillPoly(img, [np.array([p2, p3, p4], dtype=np.int32)], color)
+
+
+def _draw_dashed_line(img, p1, p2, color, thickness=1, dash_len=6, gap_len=4):
+    """Draw a dashed line from p1 to p2."""
+    dx, dy = p2[0] - p1[0], p2[1] - p1[1]
+    dist = math.sqrt(dx * dx + dy * dy)
+    if dist < 1:
+        return
+    steps = int(dist / (dash_len + gap_len))
+    if steps == 0:
+        cv2.line(img, p1, p2, color, thickness)
+        return
+    ux, uy = dx / dist, dy / dist
+    for i in range(steps):
+        s = i * (dash_len + gap_len)
+        e = min(s + dash_len, dist)
+        sp = (int(p1[0] + ux * s), int(p1[1] + uy * s))
+        ep = (int(p1[0] + ux * e), int(p1[1] + uy * e))
+        cv2.line(img, sp, ep, color, thickness)
+
+
+def draw_bird_eye_view(agents: list, env, bev_size: int = 500, scale: float = 1.5) -> np.ndarray:
+    """Enhanced bird's eye view with V2V communication, routes, and road topology."""
     bev = np.zeros((bev_size, bev_size, 3), dtype=np.uint8)
-    cv2.putText(bev, "Bird's Eye View", (10, 20),
-                cv2.FONT_HERSHEY_SIMPLEX, 0.5, (255, 255, 255), 1)
 
     if not agents:
+        cv2.putText(bev, "No agents", (bev_size // 2 - 40, bev_size // 2),
+                    cv2.FONT_HERSHEY_SIMPLEX, 0.6, (100, 100, 100), 1)
         return bev
 
-    # Find center (average of all vehicle positions)
+    # --- Center calculation ---
     positions = []
     for agent in agents:
         x, y, _ = agent.vehicle.get_location()
         positions.append((x, y))
-
     cx = sum(p[0] for p in positions) / len(positions)
     cy = sum(p[1] for p in positions) / len(positions)
 
-    colors = [(0, 255, 0), (0, 0, 255), (255, 255, 0), (255, 0, 255)]
+    def to_bev(wx, wy):
+        """World coords to BEV pixel."""
+        bx = int((wx - cx) * scale + bev_size // 2)
+        by = int((wy - cy) * scale + bev_size // 2)
+        return (bx, by)
 
+    def in_view(bx, by, margin=5):
+        return margin < bx < bev_size - margin and margin < by < bev_size - margin
+
+    # --- Draw road topology from CARLA map ---
+    if env and env.map:
+        center_loc = agents[0].vehicle.actor.get_location()
+        # Cache road edges — only recompute when center moves > 30m
+        if not hasattr(draw_bird_eye_view, '_road_cache'):
+            draw_bird_eye_view._road_cache = {'center': None, 'edges': []}
+        cache = draw_bird_eye_view._road_cache
+        cache_center = cache['center']
+        need_rebuild = (cache_center is None or
+                        math.sqrt((center_loc.x - cache_center[0])**2 +
+                                  (center_loc.y - cache_center[1])**2) > 30.0)
+
+        if need_rebuild:
+            center_wp = env.map.get_waypoint(center_loc, project_to_road=True)
+            road_edges = []
+            queue = [center_wp]
+            visited = {center_wp.road_id}
+            bfs_count = 0
+            while queue and bfs_count < 500:
+                wp = queue.pop(0)
+                bfs_count += 1
+                wx, wy = wp.transform.location.x, wp.transform.location.y
+                for nxt in wp.next(8.0):
+                    nx, ny = nxt.transform.location.x, nxt.transform.location.y
+                    road_edges.append(((wx, wy), (nx, ny)))
+                    if nxt.road_id not in visited:
+                        visited.add(nxt.road_id)
+                        queue.append(nxt)
+                for prev in wp.previous(8.0):
+                    px, py = prev.transform.location.x, prev.transform.location.y
+                    road_edges.append(((wx, wy), (px, py)))
+                    if prev.road_id not in visited:
+                        visited.add(prev.road_id)
+                        queue.append(prev)
+            cache['center'] = (center_loc.x, center_loc.y)
+            cache['edges'] = road_edges
+        else:
+            road_edges = cache['edges']
+
+        for (x1, y1), (x2, y2) in road_edges:
+            b1 = to_bev(x1, y1)
+            b2 = to_bev(x2, y2)
+            if in_view(b1[0], b1[1], margin=-20) or in_view(b2[0], b2[1], margin=-20):
+                cv2.line(bev, b1, b2, (45, 45, 45), 2)
+
+    # --- Draw routes for each agent ---
+    route_colors = [(0, 80, 0), (0, 0, 80), (80, 80, 0), (80, 0, 80)]
+    for i, agent in enumerate(agents):
+        route_wps = agent.vehicle._route_waypoints
+        if not route_wps:
+            continue
+        prev_bev = None
+        wp_index = agent.vehicle._current_wp_index
+        for j, wp in enumerate(route_wps):
+            bx, by = to_bev(wp.transform.location.x, wp.transform.location.y)
+            if not in_view(bx, by, margin=0):
+                prev_bev = (bx, by)
+                continue
+            # Upcoming route is brighter, past route is dimmer
+            is_future = j >= wp_index
+            color = route_colors[i % len(route_colors)]
+            if is_future:
+                brightness = (255, 255, 255)
+            else:
+                brightness = (30, 30, 30)
+            if prev_bev and in_view(prev_bev[0], prev_bev[1], margin=0):
+                cv2.line(bev, prev_bev, (bx, by), brightness if is_future else color, 1)
+            prev_bev = (bx, by)
+
+    vehicle_colors = [(0, 255, 0), (0, 100, 255), (255, 255, 0), (255, 0, 255)]
+    vehicle_positions = []
+
+    # --- Draw vehicles as larger arrows ---
     for i, agent in enumerate(agents):
         x, y, _ = agent.vehicle.get_location()
         yaw = agent.vehicle.get_yaw()
+        bx, by = to_bev(x, y)
+        vehicle_positions.append((bx, by, agent))
 
-        # Map to BEV coordinates
-        bx = int((x - cx) * scale + bev_size // 2)
-        by = int((y - cy) * scale + bev_size // 2)
+        if not in_view(bx, by):
+            continue
 
-        if 10 < bx < bev_size - 10 and 10 < by < bev_size - 10:
-            color = colors[i % len(colors)]
+        color = vehicle_colors[i % len(vehicle_colors)]
+        yaw_rad = math.radians(yaw)
 
-            # Draw vehicle as triangle
-            yaw_rad = math.radians(yaw)
-            pts = np.array([
-                [bx + int(8 * math.cos(yaw_rad)), by + int(8 * math.sin(yaw_rad))],
-                [bx + int(5 * math.cos(yaw_rad + 2.5)), by + int(5 * math.sin(yaw_rad + 2.5))],
-                [bx + int(5 * math.cos(yaw_rad - 2.5)), by + int(5 * math.sin(yaw_rad - 2.5))],
-            ], dtype=np.int32)
-            cv2.fillPoly(bev, [pts], color)
+        # Draw arrow (larger, more visible)
+        arrow_len = 18
+        tip = (bx + int(arrow_len * math.cos(yaw_rad)),
+               by + int(arrow_len * math.sin(yaw_rad)))
+        tail_left = (bx + int(10 * math.cos(yaw_rad + 2.3)),
+                     by + int(10 * math.sin(yaw_rad + 2.3)))
+        tail_right = (bx + int(10 * math.cos(yaw_rad - 2.3)),
+                      by + int(10 * math.sin(yaw_rad - 2.3)))
+        cv2.fillPoly(bev, [np.array([tip, tail_left, tail_right], dtype=np.int32)], color)
 
-            # Label
-            cv2.putText(bev, agent.vehicle_id[:4], (bx - 15, by - 12),
-                        cv2.FONT_HERSHEY_SIMPLEX, 0.3, color, 1)
+        # Speed text
+        speed = agent.vehicle.get_speed_kmh()
+        cv2.putText(bev, f"{agent.vehicle_id}", (bx - 20, by - 22),
+                    cv2.FONT_HERSHEY_SIMPLEX, 0.35, color, 1)
+        cv2.putText(bev, f"{speed:.0f}km/h", (bx - 18, by - 10),
+                    cv2.FONT_HERSHEY_SIMPLEX, 0.3, (200, 200, 200), 1)
 
-            # Draw shared obstacles from V2V
-            if agent.latest_coop_decision:
+    # --- Draw NPC vehicles and pedestrians ---
+    if env and env._traffic_actors:
+        for actor in env._traffic_actors:
+            if actor is None:
+                continue
+            type_id = actor.type_id
+            loc = actor.get_location()
+            bx, by = to_bev(loc.x, loc.y)
+            if not in_view(bx, by):
+                continue
+            if 'walker' in type_id or 'pedestrian' in type_id:
+                cv2.circle(bev, (bx, by), 3, (200, 200, 200), -1)
+            elif 'vehicle' in type_id:
+                yaw = actor.get_transform().rotation.yaw
+                yaw_rad = math.radians(yaw)
+                # Small triangle for NPC vehicles
+                pts = np.array([
+                    [bx + int(6 * math.cos(yaw_rad)), by + int(6 * math.sin(yaw_rad))],
+                    [bx + int(4 * math.cos(yaw_rad + 2.3)), by + int(4 * math.sin(yaw_rad + 2.3))],
+                    [bx + int(4 * math.cos(yaw_rad - 2.3)), by + int(4 * math.sin(yaw_rad - 2.3))],
+                ], dtype=np.int32)
+                cv2.fillPoly(bev, [pts], (128, 128, 128))
+
+    # --- V2V Communication Links ---
+    for i, (bx, by, agent) in enumerate(vehicle_positions):
+        if not agent.latest_coop_decision:
+            continue
+
+        # Get V2V messages this agent received
+        v2v_msgs = getattr(agent, '_last_v2v_messages', {})
+        if not v2v_msgs:
+            continue
+
+        for sender_id, msg in v2v_msgs.items():
+            # Find sender vehicle position
+            sender_pos = None
+            for j, (sbx, sby, sagent) in enumerate(vehicle_positions):
+                if sagent.vehicle_id == sender_id:
+                    sender_pos = (sbx, sby)
+                    break
+
+            if sender_pos is None:
+                # Use position from V2V message
+                sx, sy, _ = msg.position
+                sender_pos = to_bev(sx, sy)
+
+            if not in_view(sender_pos[0], sender_pos[1]) and not in_view(bx, by):
+                continue
+
+            # Determine link color based on coordination status
+            action = agent.latest_coop_decision.action
+            if action == "yield":
+                link_color = (0, 0, 255)  # Red
+            elif action == "slow_down":
+                link_color = (0, 165, 255)  # Orange
+            elif action == "follow":
+                link_color = (255, 255, 0)  # Yellow
+            elif action == "stop":
+                link_color = (0, 0, 200)  # Dark red
+            else:
+                link_color = (0, 255, 128)  # Green (proceed)
+
+            # Draw dashed communication link
+            _draw_dashed_line(bev, sender_pos, (bx, by), link_color, thickness=1)
+
+            # Draw arrow from sender to receiver
+            mid_x = (sender_pos[0] + bx) // 2
+            mid_y = (sender_pos[1] + by) // 2
+            _draw_arrow(bev, sender_pos, (mid_x, mid_y), link_color, thickness=1, tip_len=6)
+
+            # Draw shared obstacle dots from V2V
+            if agent.latest_coop_decision.shared_obstacles:
                 for obs in agent.latest_coop_decision.shared_obstacles:
-                    ox = int((obs.x - cx) * scale + bev_size // 2)
-                    oy = int((obs.y - cy) * scale + bev_size // 2)
-                    if 5 < ox < bev_size - 5 and 5 < oy < bev_size - 5:
-                        cv2.circle(bev, (ox, oy), 3, (0, 165, 255), -1)
+                    ox, oy = to_bev(obs.x, obs.y)
+                    if in_view(ox, oy):
+                        cv2.circle(bev, (ox, oy), 4, (0, 165, 255), -1)
+                        cv2.circle(bev, (ox, oy), 6, (0, 165, 255), 1)
+
+    # --- Info Panel (top-left) ---
+    panel_y = 10
+    cv2.rectangle(bev, (0, 0), (bev_size - 1, 85), (20, 20, 20), -1)
+    cv2.putText(bev, "V2V Cooperative Perception", (10, panel_y + 12),
+                cv2.FONT_HERSHEY_SIMPLEX, 0.5, (255, 255, 255), 1)
+
+    # V2V distance
+    if len(agents) >= 2:
+        v0_loc = agents[0].vehicle.get_location()
+        v1_loc = agents[1].vehicle.get_location()
+        v2v_dist = math.sqrt((v0_loc[0]-v1_loc[0])**2 + (v0_loc[1]-v1_loc[1])**2)
+        cv2.putText(bev, f"V2V Distance: {v2v_dist:.1f}m", (10, panel_y + 30),
+                    cv2.FONT_HERSHEY_SIMPLEX, 0.4, (0, 255, 200), 1)
+
+    # Per-vehicle V2V status
+    for i, agent in enumerate(agents):
+        y_off = panel_y + 48 + i * 16
+        loc = agent.vehicle.get_location()
+        if loc is None:
+            continue
+        coord_status, n_nearby = agent.coop_planner._get_coordination_status(
+            loc[0], loc[1]
+        )
+        action = agent.latest_coop_decision.action if agent.latest_coop_decision else "N/A"
+        shared_n = len(agent.latest_coop_decision.shared_obstacles) if agent.latest_coop_decision else 0
+        v_color = vehicle_colors[i % len(vehicle_colors)]
+        cv2.putText(bev, f"[V{i}] {coord_status.upper()} | act:{action} | shared:{shared_n} | n:{n_nearby}",
+                    (10, y_off), cv2.FONT_HERSHEY_SIMPLEX, 0.32, v_color, 1)
+
+    # --- Legend (bottom-right) ---
+    leg_x = bev_size - 170
+    leg_y = bev_size - 70
+    cv2.rectangle(bev, (leg_x - 5, leg_y - 15), (bev_size - 1, bev_size - 1), (20, 20, 20), -1)
+    cv2.putText(bev, "--- V2V Link ---", (leg_x, leg_y + 5),
+                cv2.FONT_HERSHEY_SIMPLEX, 0.3, (200, 200, 200), 1)
+    _draw_dashed_line(bev, (leg_x, leg_y + 15), (leg_x + 60, leg_y + 15), (0, 255, 128), 1)
+    cv2.putText(bev, "proceed", (leg_x + 65, leg_y + 19),
+                cv2.FONT_HERSHEY_SIMPLEX, 0.3, (0, 255, 128), 1)
+    _draw_dashed_line(bev, (leg_x, leg_y + 28), (leg_x + 60, leg_y + 28), (0, 165, 255), 1)
+    cv2.putText(bev, "slow_down", (leg_x + 65, leg_y + 32),
+                cv2.FONT_HERSHEY_SIMPLEX, 0.3, (0, 165, 255), 1)
+    _draw_dashed_line(bev, (leg_x, leg_y + 41), (leg_x + 60, leg_y + 41), (0, 0, 255), 1)
+    cv2.putText(bev, "yield", (leg_x + 65, leg_y + 45),
+                cv2.FONT_HERSHEY_SIMPLEX, 0.3, (0, 0, 255), 1)
 
     return bev
+
+
+def spawn_npc_traffic(env, agents, num_vehicles: int = 8, num_pedestrians: int = 5,
+                      spawn_radius: float = 60.0):
+    """
+    Spawn NPC vehicles and pedestrians near the ego vehicles' routes.
+    Safe for CARLA synchronous mode — avoids get_random_location_from_navigation().
+    """
+    import carla
+    bp_library = env.world.get_blueprint_library()
+    spawn_points = env.map.get_spawn_points()
+    vehicle_bps = bp_library.filter('vehicle')
+    walker_bps = bp_library.filter('walker.pedestrian.*')
+
+    # Collect a sample of route waypoints as spawn anchors (avoid O(n*m))
+    hot_zones = []
+    for agent in agents:
+        route = agent.vehicle._route_waypoints
+        if route:
+            step = max(1, len(route) // 15)
+            for wp in route[::step]:
+                hot_zones.append((wp.transform.location.x, wp.transform.location.y))
+
+    if not hot_zones:
+        return 0, 0
+
+    # --- NPC Vehicles ---
+    spawned_vehicles = 0
+    random.shuffle(spawn_points)
+    for sp in spawn_points:
+        if spawned_vehicles >= num_vehicles:
+            break
+        # Check if spawn point is near any route waypoint
+        too_far = True
+        for hx, hy in hot_zones:
+            if (sp.location.x - hx) ** 2 + (sp.location.y - hy) ** 2 < spawn_radius ** 2:
+                too_far = False
+                break
+        if too_far:
+            continue
+
+        bp = random.choice(vehicle_bps)
+        if bp.has_attribute('color'):
+            bp.set_attribute('color', random.choice(bp.get_attribute('color').recommended_values))
+        actor = env.world.try_spawn_actor(bp, sp)
+        if actor:
+            # Don't enable autopilot — TrafficManager conflicts with synchronous mode
+            # NPCs act as static obstacles for YOLO perception testing
+            env._traffic_actors.append(actor)
+            spawned_vehicles += 1
+
+    # Pedestrians disabled — walker AI crashes CARLA in sync mode
+    spawned_pedestrians = 0
+
+    return spawned_vehicles, spawned_pedestrians
 
 
 def main():
@@ -353,72 +641,85 @@ def main():
             loc = managed.actor.get_location()
             logger.info(f"  vehicle_{i} actual position: ({loc.x:.1f}, {loc.y:.1f}, {loc.z:.1f})")
         
-        # Step 3: Teleport second vehicle to be close to first vehicle (within 30m)
+        # Step 3: Teleport second vehicle behind first vehicle, ON THE ROAD
         if len(managed_vehicles) >= 2:
             import carla
             first_transform = managed_vehicles[0].actor.get_transform()
             first_loc = first_transform.location
             first_yaw_rad = math.radians(first_transform.rotation.yaw)
-            
+
             logger.info(f"First vehicle location: ({first_loc.x:.1f}, {first_loc.y:.1f}), yaw: {first_transform.rotation.yaw:.1f}")
-            
-            # Calculate target position: 20m behind and to the side
+
+            # Use CARLA waypoint API to find a valid on-road position behind vehicle_0
+            wp0 = env.map.get_waypoint(first_loc, project_to_road=True)
+            target_wp = wp0
             offset_distance = 20.0  # meters
-            target_x = first_loc.x - offset_distance * math.sin(first_yaw_rad)
-            target_y = first_loc.y + offset_distance * math.cos(first_yaw_rad)
-            target_z = first_loc.z + 0.5
-            
-            logger.info(f"Target position for vehicle_1: ({target_x:.1f}, {target_y:.1f})")
-            
-            # Create teleport transform
-            teleport_loc = carla.Location(x=target_x, y=target_y, z=target_z)
-            teleport_transform = carla.Transform(
-                teleport_loc,
-                carla.Rotation(yaw=first_transform.rotation.yaw)
-            )
-            
+            traveled = 0.0
+            step = 2.0  # walk backwards in 2m increments
+
+            while traveled < offset_distance and target_wp is not None:
+                prev_wps = target_wp.previous(step)
+                if not prev_wps:
+                    break
+                target_wp = prev_wps[0]
+                traveled += step
+
+            if target_wp is not None:
+                teleport_transform = target_wp.transform
+                teleport_transform.location.z += 0.5  # raise slightly to avoid ground clip
+                logger.info(f"Teleporting vehicle_1 to waypoint at ({teleport_transform.location.x:.1f}, {teleport_transform.location.y:.1f}), traveled {traveled:.0f}m along road")
+            else:
+                # Fallback: place 10m behind using forward vector
+                target_x = first_loc.x - offset_distance * math.cos(first_yaw_rad)
+                target_y = first_loc.y - offset_distance * math.sin(first_yaw_rad)
+                target_z = first_loc.z + 0.5
+                teleport_transform = carla.Transform(
+                    carla.Location(x=target_x, y=target_y, z=target_z),
+                    carla.Rotation(yaw=first_transform.rotation.yaw)
+                )
+                logger.info(f"Waypoint walk failed, using fallback position: ({target_x:.1f}, {target_y:.1f})")
+
             # Teleport second vehicle
             managed_vehicles[1].actor.set_transform(teleport_transform)
-            env.tick()  # Ensure teleport takes effect
-            time.sleep(0.1)
-            
+            managed_vehicles[1].spawn_transform = None  # Clear so generate_route uses current position
+            env.tick()
+            time.sleep(0.5)
+
             # Verify distance
             new_loc = managed_vehicles[1].actor.get_location()
             actual_dist = math.sqrt(
                 (new_loc.x - first_loc.x)**2 + (new_loc.y - first_loc.y)**2
             )
             logger.info(f"Teleported vehicle_1 to ({new_loc.x:.1f}, {new_loc.y:.1f})")
-            logger.info(f"V2V initial distance: {actual_dist:.1f}m (target: {offset_distance}m)")
-            
-            if actual_dist > 35:
-                logger.warning(f"Distance still too large ({actual_dist:.1f}m), teleporting closer...")
-                # Force closer position
-                target_x = first_loc.x - 15.0 * math.sin(first_yaw_rad)
-                target_y = first_loc.y + 15.0 * math.cos(first_yaw_rad)
-                teleport_loc = carla.Location(x=target_x, y=target_y, z=first_loc.z + 0.5)
-                teleport_transform = carla.Transform(
-                    teleport_loc,
-                    carla.Rotation(yaw=first_transform.rotation.yaw)
-                )
-                managed_vehicles[1].actor.set_transform(teleport_transform)
-                env.tick()
-                time.sleep(0.1)
-                new_loc = managed_vehicles[1].actor.get_location()
-                actual_dist = math.sqrt(
-                    (new_loc.x - first_loc.x)**2 + (new_loc.y - first_loc.y)**2
-                )
-                logger.info(f"Final distance after re-teleport: {actual_dist:.1f}m")
-        
+            logger.info(f"V2V initial distance: {actual_dist:.1f}m (target: {offset_distance:.0f}m)")
+
         # Now create agents with the spawned vehicles
+        # IMPORTANT: vehicle_0 gets a fresh route; vehicle_1's route is regenerated
+        # AFTER teleportation to match vehicle_0's direction (same end_location)
+        vehicle_0_end_location = None
+
         for i, managed in enumerate(managed_vehicles):
             vid = f"vehicle_{i}"
-            
+
             logger.info(f"Attaching RGB camera to {vid}...")
             managed.attach_rgb_camera(sensor_cfg.get('rgb_camera', {}))
             logger.info(f"Attaching depth camera to {vid}...")
             managed.attach_depth_camera(sensor_cfg.get('depth_camera', {}))
-            logger.info(f"Generating route for {vid}...")
-            env.generate_route(managed, sampling_resolution=4.0)
+
+            if i == 0:
+                logger.info(f"Generating route for {vid}...")
+                env.generate_route(managed, sampling_resolution=4.0)
+                # Remember vehicle_0's end location so vehicle_1 heads the same direction
+                if managed._route_waypoints:
+                    vehicle_0_end_location = managed._route_waypoints[-1].transform.location
+                    logger.info(f"Vehicle 0 heading toward: ({vehicle_0_end_location.x:.1f}, {vehicle_0_end_location.y:.1f})")
+            elif vehicle_0_end_location is not None:
+                # Regenerate route from CURRENT (teleported) position toward vehicle_0's goal
+                logger.info(f"Generating route for {vid} (from teleported position, same direction as vehicle_0)...")
+                env.generate_route(managed, end_location=vehicle_0_end_location, sampling_resolution=4.0)
+            else:
+                logger.info(f"Generating route for {vid}...")
+                env.generate_route(managed, sampling_resolution=4.0)
 
             logger.info(f"Creating agent for {vid}...")
             agent = CooperativeVehicleAgent(vid, config, managed)
@@ -443,6 +744,20 @@ def main():
             time.sleep(0.05)
         else:
             logger.warning("Sensor initialization timeout - proceeding anyway")
+
+        # Spawn NPC traffic and pedestrians near ego vehicle routes
+        npc_cfg = config.get('cooperation', {})
+        num_npc_vehicles = npc_cfg.get('num_npc_vehicles', 8)
+        num_npc_pedestrians = npc_cfg.get('num_npc_pedestrians', 5)
+        if num_npc_vehicles > 0 or num_npc_pedestrians > 0:
+            logger.info(f"Spawning NPC traffic ({num_npc_vehicles} vehicles, {num_npc_pedestrians} pedestrians)...")
+            try:
+                nv, np = spawn_npc_traffic(env, agents,
+                                           num_vehicles=num_npc_vehicles,
+                                           num_pedestrians=num_npc_pedestrians)
+                logger.info(f"  Spawned {nv} NPC vehicles, {np} pedestrians")
+            except Exception as e:
+                logger.warning(f"NPC spawn failed: {e}")
 
         logger.info("Setting up display windows...")
 
@@ -529,6 +844,7 @@ def main():
 
                     # Prepare and display in separate window
                     win_name = window_names[i]
+                    rgb = agent._latest_rgb if hasattr(agent, '_latest_rgb') else None
                     if rgb is not None:
                         # Draw detections and info on image
                         display = rgb.copy()
@@ -601,10 +917,7 @@ def main():
                         cv2.imshow(win_name, blank)
 
                 # Update bird's eye view
-                bev = draw_bird_eye_view(agents, bev_size=600, scale=3.0)
-                # Add legend
-                cv2.putText(bev, "Green: Vehicle 1 | Blue: Vehicle 2 | Orange dots: Shared obstacles", 
-                            (10, 580), cv2.FONT_HERSHEY_SIMPLEX, 0.4, (255, 255, 255), 1)
+                bev = draw_bird_eye_view(agents, env, bev_size=600, scale=3.0)
                 cv2.imshow(bev_win_name, bev)
 
                 fps_counter.tick()

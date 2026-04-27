@@ -369,7 +369,19 @@ class YOLODetector:
 
     def _load_ultralytics(self):
         from ultralytics import YOLO
-        model_path = self.config.get("onnx_model_path", "model/yolo11n.onnx")
+
+        # Prefer explicit pt_model_path if set
+        model_path = self.config.get("pt_model_path") or self.config.get("onnx_model_path", "model/yolov8n.pt")
+
+        # If .onnx fails to load (IR version mismatch, etc.), fall back to .pt
+        if model_path.endswith('.onnx'):
+            pt_path = model_path.replace('.onnx', '.pt')
+            if os.path.exists(pt_path):
+                print(f"[Detector] ONNX model failed, falling back to PyTorch: {pt_path}")
+                model_path = pt_path
+            else:
+                print(f"[WARNING] ONNX model failed, no .pt fallback at {pt_path}")
+
         print(f"[Detector] Initializing Backend: {model_path}")
         self.model = YOLO(model_path, task='detect')
         raw_names = getattr(self.model, 'names', None)

@@ -41,6 +41,7 @@ except ImportError:
 
 try:
     from control.vehicle_controller import VehicleController
+    from planning.apf_planner import PlannerOutput
     CONTROL_AVAILABLE = True
 except ImportError:
     print("[WARNING] Control module not available.")
@@ -162,27 +163,42 @@ class ControlNode(Node):
                     target_point = (path.poses[-1].pose.position.x, 
                                    path.poses[-1].pose.position.y)
             
-            # Run controller
+            # Run controller - build PlannerOutput from planning data
             if target_point:
-                control_output = self.controller.compute_control(
-                    current_position=(current_x, current_y),
-                    target_position=target_point,
-                    current_speed=current_speed,
-                    target_speed=target_speed
+                import math
+                dx = target_point[0] - current_x
+                dy = target_point[1] - current_y
+                target_yaw = math.degrees(math.atan2(dy, dx))
+                # Compute steering from heading error
+                yaw_error = target_yaw - (self.current_pose.pose.orientation.z * 100)  # rough approx
+                steering = max(-1.0, min(1.0, yaw_error / 45.0))
+
+                # Build a PlannerOutput to pass to controller
+                planner_out = PlannerOutput(
+                    target_steering=steering,
+                    target_speed=target_speed,
+                    emergency_brake=False,
+                    status="normal",
+                    trajectory=[(p.pose.position.x, p.pose.position.y) for p in path.poses] if path else [],
                 )
-                
+
+                control_output = self.controller.compute_control(
+                    planner_out,
+                    current_speed_kmh=current_speed * 3.6,
+                )
+
                 # Publish control commands
                 cmd_vel = Twist()
                 cmd_vel.linear.x = control_output.get('throttle', 0.0)
-                cmd_vel.angular.z = control_output.get('steering', 0.0)
+                cmd_vel.angular.z = control_output.get('steer', 0.0)
                 self.cmd_vel_pub.publish(cmd_vel)
-                
-                steering = Float64()
-                steering.data = control_output.get('steering_angle', 0.0)
-                self.steering_pub.publish(steering)
-                
+
+                steering_msg = Float64()
+                steering_msg.data = control_output.get('steer', 0.0)
+                self.steering_pub.publish(steering_msg)
+
                 emergency = Bool()
-                emergency.data = control_output.get('emergency_brake', False)
+                emergency.data = control_output.get('brake', 0.0) >= 0.8
                 self.emergency_pub.publish(emergency)
                 
         except Exception as e:

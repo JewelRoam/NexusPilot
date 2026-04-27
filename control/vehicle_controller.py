@@ -20,6 +20,7 @@ class VehicleController:
         self.platform = platform
         self.config = config
         self.base_pwm = config.get("base_pwm", 0.3) # Min power to move
+        self.is_emergency = False  # Track emergency brake state
 
     def compute_control(self, planner_output, current_speed_kmh: float = 0.0) -> dict:
         """
@@ -87,3 +88,15 @@ class VehicleController:
         if self.platform == "carla":
             return {"throttle": 0.0, "steer": 0.0, "brake": 1.0, "reverse": False}
         return {"left_pwm": 0.0, "right_pwm": 0.0, "direction": "stop"}
+
+    def apply_carla_control(self, vehicle_actor, control_dict: dict):
+        """Apply computed control dict to a CARLA Vehicle actor."""
+        import carla
+        self.is_emergency = control_dict.get("brake", 0.0) >= 0.8 or control_dict.get("emergency_brake", False)
+        carla_control = carla.VehicleControl(
+            throttle=float(control_dict.get("throttle", 0.0)),
+            steer=float(control_dict.get("steer", 0.0)),
+            brake=float(control_dict.get("brake", 0.0)),
+            reverse=bool(control_dict.get("reverse", False)),
+        )
+        vehicle_actor.apply_control(carla_control)

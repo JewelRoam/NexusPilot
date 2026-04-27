@@ -22,6 +22,9 @@ cooperation:
   coordination_range: 50.0
   active_coordination_range: 30.0
   warning_range: 15.0
+  num_cooperative_vehicles: 2
+  num_npc_vehicles: 8        # NPC traffic vehicles spawned near route
+  num_npc_pedestrians: 5     # Pedestrians spawned near route sidewalks
 depth:
   max_distance: 100.0
   source: carla_depth_camera
@@ -31,11 +34,12 @@ logging:
   save_metrics: true
   save_video: false
 perception:
-  use_onnx: true           # Optimized for RPi 5
-  use_openvino: false      # Set to true if openvino model is present
-  imgsz: 320               # High FPS tradeoff
+  use_onnx: false            # Disabled: ONNX IR version mismatch on Python 3.7
+  use_openvino: false        # Set to true if openvino model is present
+  imgsz: 320                 # High FPS tradeoff
   confidence_threshold: 0.4
   onnx_model_path: model/yolo11n.onnx
+  pt_model_path: model/yolov8n.pt  # YOLOv8 works with ultralytics 8.0.x on Python 3.7
   openvino_model_path: model/yolo11n_openvino
   vehicle_classes: [2, 3, 5, 7]
   pedestrian_classes: [0]

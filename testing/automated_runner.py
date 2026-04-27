@@ -235,7 +235,7 @@ class AutomatedTestRunner:
             )
             results.append(result)
 
-            status = "✓ PASS" if result.passed else "✗ FAIL"
+            status = "[PASS]" if result.passed else "[FAIL]"
             print(f"Result: {status} | Collisions: {result.collision_count} | "
                   f"Avg Speed: {result.average_speed:.1f} km/h")
 

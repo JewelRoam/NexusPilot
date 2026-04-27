@@ -33,6 +33,7 @@ class PlannerOutput:
     trajectory: List[Tuple[float, float]] = field(default_factory=list)
     recovery_mode: str = "none"
     debug_info: dict = field(default_factory=dict)
+    nearest_obstacle_dist: float = 999.0
 
 
 class APFPlanner:
@@ -67,13 +68,45 @@ class APFPlanner:
         if not hasattr(self, '_last_pos_check'):
             self._last_pos_check = (ego_pos, now)
             return False
-        
+
         last_pos, last_time = self._last_pos_check
         if now - last_time > self.stuck_timeout:
             dist = np.linalg.norm(ego_pos - last_pos)
             self._last_pos_check = (ego_pos, now)
             return dist < 0.5 and ego_speed < 2.0
         return False
+
+    def detections_to_obstacles(self, detections, ego_x: float, ego_y: float,
+                                 ego_yaw: float) -> List[Obstacle]:
+        """Convert enriched DetectedObject list to APF Obstacle list."""
+        obstacles = []
+        ego_yaw_rad = math.radians(ego_yaw)
+        for det in detections:
+            if det.world_position is not None and det.distance > 0:
+                ox, oy = det.world_position[0], det.world_position[1]
+            elif det.distance > 0:
+                # Approximate world position from ego pose + distance
+                cx, cy = det.center
+                # Rough direction from image center
+                img_center_x = 320.0  # assumes 640 width
+                angle_offset = (cx - img_center_x) / 320.0 * math.radians(55.0)  # ~110° FOV
+                abs_angle = ego_yaw_rad + angle_offset
+                ox = ego_x + det.distance * math.cos(abs_angle)
+                oy = ego_y + det.distance * math.sin(abs_angle)
+            else:
+                continue  # skip detections without depth
+
+            obs = Obstacle(
+                x=ox,
+                y=oy,
+                distance=det.distance,
+                category=det.category,
+                confidence=det.confidence,
+                velocity=det.velocity,
+            )
+            obs.ethical_weight = self._ethical_weights.get(det.category, 1.0)
+            obstacles.append(obs)
+        return obstacles
 
     def _calculate_forces(self, ego_pos: np.ndarray, goal_pos: np.ndarray, 
                            obstacles: List[Obstacle]) -> Tuple[np.ndarray, np.ndarray, np.ndarray]:
@@ -123,11 +156,11 @@ class APFPlanner:
             if elapsed > 4.0: # End recovery after 4 seconds
                 self._recovery_state["is_recovering"] = False
             else:
-                return PlannerOutput(0.0, self.recovery_reverse_speed, False, "recovering", recovery_mode=self._recovery_state["recovery_mode"])
+                return PlannerOutput(0.0, self.recovery_reverse_speed, False, "recovering", recovery_mode=self._recovery_state["recovery_mode"], nearest_obstacle_dist=999.0)
 
         if self.check_stuck(ego_pos, ego_speed):
             self._recovery_state.update({"is_recovering": True, "start_time": time.time(), "recovery_mode": "reversing"})
-            return PlannerOutput(0.0, self.recovery_reverse_speed, False, "recovering", recovery_mode="reversing")
+            return PlannerOutput(0.0, self.recovery_reverse_speed, False, "recovering", recovery_mode="reversing", nearest_obstacle_dist=999.0)
 
         # === 2. Normal Planning (Improved APF) ===
         f_att, f_rep, f_rot = self._calculate_forces(ego_pos, goal_pos, all_obs)
@@ -155,17 +188,18 @@ class APFPlanner:
             status = "normal"
             
         traj = self._generate_trajectory(ego_pos, ego_yaw_rad, f_total)
-        
+
         return PlannerOutput(
             target_steering=float(target_steering),
             target_speed=float(target_speed),
             emergency_brake=emergency,
             status=status,
             trajectory=traj,
-            debug_info={"f_att": f_att.tolist(), "f_rep": f_rep.tolist(), "f_rot": f_rot.tolist()}
+            debug_info={"f_att": f_att.tolist(), "f_rep": f_rep.tolist(), "f_rot": f_rot.tolist()},
+            nearest_obstacle_dist=min_dist,
         )
 
-    def _generate_trajectory(self, start_pos: np.ndarray, start_yaw: float, 
+    def _generate_trajectory(self, start_pos: np.ndarray, start_yaw: float,
                               force_vec: np.ndarray) -> List[Tuple[float, float]]:
         p0 = start_pos
         p1 = p0 + 2.0 * np.array([math.cos(start_yaw), math.sin(start_yaw)])

@@ -2,19 +2,159 @@
 Single Vehicle Demo - Full Closed-Loop Pipeline in CARLA.
 Demonstrates: Perception (YOLO) → Depth → APF Planning → PID Control
 
-This is the FIRST milestone: prove the full pipeline works on PC
-before deploying to Raspberry Pi.
+Scenario modes for obstacle avoidance demonstration:
+  easy   — 1 static NPC on route, basic bypass
+  medium — 2-3 staggered NPCs, continuous avoidance
+  hard   — dense obstacles in narrow sections, local-minimum escape
 
 Usage:
   1. Start CARLA server: CARLA_0.9.13/WindowsNoEditor/CarlaUE4.exe
   2. Run: python -m simulation.single_vehicle_demo
+  3. Run with scenario: python -m simulation.single_vehicle_demo --scenario medium
 """
 import os
 import sys
 import time
 import yaml
 import cv2
+import math
+import argparse
 import numpy as np
+
+
+class ScenarioObstacleSpawner:
+    """Spawn static NPC obstacles along the ego vehicle's route for avoidance demos."""
+
+    SCENARIOS = {
+        "easy": {
+            "obstacles": 1,
+            "spacing_m": 35.0,
+            "lateral_offset_m": 0.0,       # Directly on route centerline
+            "start_offset_m": 25.0,        # First obstacle 25m ahead
+            "description": "Single static obstacle — basic bypass",
+        },
+        "medium": {
+            "obstacles": 3,
+            "spacing_m": 22.0,
+            "lateral_offset_m": 1.5,       # Staggered left/right
+            "start_offset_m": 20.0,
+            "description": "Staggered obstacles — continuous avoidance",
+        },
+        "hard": {
+            "obstacles": 5,
+            "spacing_m": 15.0,
+            "lateral_offset_m": 1.2,
+            "start_offset_m": 18.0,
+            "description": "Dense obstacles — local-minimum escape + rotation field",
+        },
+    }
+
+    def __init__(self, env, ego_vehicle):
+        self.env = env
+        self.ego = ego_vehicle
+        self.spawned_actors = []
+
+    def spawn(self, scenario_name: str) -> int:
+        """Spawn obstacles for the given scenario along the ego route."""
+        if scenario_name not in self.SCENARIOS:
+            raise ValueError(f"Unknown scenario: {scenario_name}. "
+                             f"Available: {list(self.SCENARIOS.keys())}")
+
+        cfg = self.SCENARIOS[scenario_name]
+        route = self.ego._route_waypoints
+        if not route:
+            raise RuntimeError("No route generated for ego vehicle")
+
+        import carla
+        bp_library = self.env.world.get_blueprint_library()
+        vehicle_bps = bp_library.filter('vehicle')
+        ego_loc = self.ego.actor.get_location()
+
+        # Find the route waypoint closest to start_offset_m ahead
+        cumulative_dist = 0.0
+        wp_index = 0
+        for i, wp in enumerate(route):
+            if i > 0:
+                prev = route[i - 1].transform.location
+                curr = wp.transform.location
+                cumulative_dist += math.sqrt((curr.x - prev.x) ** 2 + (curr.y - prev.y) ** 2)
+            if cumulative_dist >= cfg["start_offset_m"]:
+                wp_index = i
+                break
+
+        # Spawn obstacles at evenly spaced waypoints along route
+        route_len = len(route)
+        if route_len < 2:
+            return 0
+
+        total_route_dist = sum(
+            math.sqrt((route[i].transform.location.x - route[i - 1].transform.location.x) ** 2 +
+                      (route[i].transform.location.y - route[i - 1].transform.location.y) ** 2)
+            for i in range(wp_index + 1, route_len)
+        )
+
+        spacing = cfg["spacing_m"]
+        num_obstacles = min(cfg["obstacles"], (route_len - wp_index) // 3)
+        lateral = cfg["lateral_offset_m"]
+        spawned = 0
+
+        for obs_i in range(num_obstacles):
+            # Find waypoint at target distance along route
+            target_dist = obs_i * spacing
+            traveled = 0.0
+            target_wp = route[wp_index]
+            for j in range(wp_index, route_len):
+                if j > wp_index:
+                    prev = route[j - 1].transform.location
+                    curr = route[j].transform.location
+                    traveled += math.sqrt((curr.x - prev.x) ** 2 + (curr.y - prev.y) ** 2)
+                if traveled >= target_dist:
+                    target_wp = route[j]
+                    break
+
+            # Skip if too close to spawn point
+            t_loc = target_wp.transform.location
+            dist_to_ego = math.sqrt((t_loc.x - ego_loc.x) ** 2 + (t_loc.y - ego_loc.y) ** 2)
+            if dist_to_ego < 12.0:
+                continue
+
+            # Compute lateral offset (perpendicular to road direction)
+            yaw_rad = math.radians(target_wp.transform.rotation.yaw)
+            side = 1 if (obs_i % 2 == 0) else -1
+            offset_x = side * lateral * math.sin(yaw_rad)
+            offset_y = -side * lateral * math.cos(yaw_rad)
+
+            spawn_loc = carla.Transform(
+                carla.Location(
+                    x=t_loc.x + offset_x,
+                    y=t_loc.y + offset_y,
+                    z=t_loc.z + 0.5,
+                ),
+                target_wp.transform.rotation
+            )
+
+            bp = vehicle_bps[obs_i % len(vehicle_bps)]
+            if bp.has_attribute('color'):
+                bp.set_attribute('color', '255,50,50')  # Red — clearly visible
+
+            actor = self.env.world.try_spawn_actor(bp, spawn_loc)
+            if actor:
+                # Static obstacle — do NOT enable autopilot (no TrafficManager in sync mode)
+                self.spawned_actors.append(actor)
+                self.env._traffic_actors.append(actor)
+                spawned += 1
+
+        self.spawned_actors = self.env._traffic_actors[-spawned:] if spawned else []
+        return spawned
+
+    def destroy(self):
+        """Destroy all spawned scenario obstacles."""
+        for actor in self.spawned_actors:
+            try:
+                actor.destroy()
+            except Exception:
+                pass
+        self.spawned_actors.clear()
 
 # Ensure project root is in path
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
@@ -33,7 +173,7 @@ def load_config(config_path: str = "config/config.yaml") -> dict:
 
 
 def draw_hud(image: np.ndarray, fps: float, planner_output, control_dict: dict,
-             detection_summary: dict, vehicle_speed: float) -> np.ndarray:
+             detection_summary: dict, vehicle_speed: float, scenario: str = None) -> np.ndarray:
     """Draw comprehensive HUD overlay on the image."""
     h, w = image.shape[:2]
 
@@ -48,6 +188,11 @@ def draw_hud(image: np.ndarray, fps: float, planner_output, control_dict: dict,
     cv2.putText(image, "=== Perception-Planning-Control ===", (20, y),
                 cv2.FONT_HERSHEY_SIMPLEX, 0.5, (0, 255, 0), 1)
     y += 25
+    if scenario:
+        sc_color = {"easy": (0, 255, 0), "medium": (0, 165, 255), "hard": (0, 0, 255)}.get(scenario, (255, 255, 255))
+        cv2.putText(image, f"Scenario: {scenario.upper()}", (20, y),
+                    cv2.FONT_HERSHEY_SIMPLEX, 0.5, sc_color, 2)
+        y += 20
     cv2.putText(image, f"FPS: {fps:.1f}", (20, y),
                 cv2.FONT_HERSHEY_SIMPLEX, 0.5, (255, 255, 255), 1)
     y += 20
@@ -115,7 +260,15 @@ def draw_detections(image: np.ndarray, detections, depth_estimator) -> np.ndarra
 
 
 def main():
-    config = load_config()
+    parser = argparse.ArgumentParser(description="Single Vehicle Demo with Obstacle Avoidance Scenarios")
+    parser.add_argument("--scenario", choices=["easy", "medium", "hard", None],
+                        default=None,
+                        help="Obstacle scenario mode: easy, medium, hard (default: None = standard traffic)")
+    parser.add_argument("--config", default="config/config.yaml",
+                        help="Path to config file")
+    args = parser.parse_args()
+
+    config = load_config(args.config)
     logger = setup_logger("SingleVehicle", config.get("logging", {}).get("level", "INFO"))
     metrics = PerformanceMetrics()
     fps_counter = FPSCounter()
@@ -151,8 +304,20 @@ def main():
         # Generate route using CARLA's GlobalRoutePlanner
         env.generate_route(ego, sampling_resolution=2.0)
 
-        # Spawn traffic (walkers disabled - can cause hangs in CARLA 0.9.13)
-        env.spawn_traffic(num_vehicles=15, num_walkers=0)
+        # Spawn obstacles: scenario mode or random traffic
+        scenario_spawner = None
+        if args.scenario:
+            cfg = ScenarioObstacleSpawner.SCENARIOS[args.scenario]
+            logger.info(f"=== Obstacle Avoidance Scenario: {args.scenario.upper()} ===")
+            logger.info(f"  {cfg['description']}")
+            scenario_spawner = ScenarioObstacleSpawner(env, ego)
+            count = scenario_spawner.spawn(args.scenario)
+            logger.info(f"  Spawned {count} scenario obstacles along route")
+            # Spawn light background traffic (fewer to avoid clutter)
+            env.spawn_traffic(num_vehicles=5, num_walkers=0)
+        else:
+            # Standard mode: random traffic for general driving demo
+            env.spawn_traffic(num_vehicles=15, num_walkers=0)
 
         # Wait for first sensor data
         logger.info("Waiting for sensor data...")
@@ -161,8 +326,9 @@ def main():
             time.sleep(0.05)
 
         # Setup display
-        cv2.namedWindow('Single Vehicle Demo', cv2.WINDOW_NORMAL)
-        cv2.resizeWindow('Single Vehicle Demo', 1280, 720)
+        win_title = f"Single Vehicle Demo{' - ' + args.scenario.upper() + ' Scenario' if args.scenario else ''}"
+        cv2.namedWindow(win_title, cv2.WINDOW_NORMAL)
+        cv2.resizeWindow(win_title, 1280, 720)
 
         logger.info("=== Starting single-vehicle closed-loop demo ===")
         logger.info("Press 'q' or close window to stop.")
@@ -242,10 +408,10 @@ def main():
 
             summary = detector.get_detection_summary(detections)
             display = draw_hud(display, fps_counter.fps, planner_output,
-                             control_dict, summary, ego_speed)
+                             control_dict, summary, ego_speed, args.scenario)
 
             # Convert RGB to BGR for OpenCV display
-            cv2.imshow('Single Vehicle Demo', cv2.cvtColor(display, cv2.COLOR_RGB2BGR))
+            cv2.imshow(win_title, cv2.cvtColor(display, cv2.COLOR_RGB2BGR))
 
             metrics.stop_timer("total_frame")
             metrics.increment("frames")
@@ -265,7 +431,7 @@ def main():
             key = cv2.waitKey(1) & 0xFF
             if key == ord('q'):
                 break
-            if cv2.getWindowProperty('Single Vehicle Demo', cv2.WND_PROP_VISIBLE) < 1:
+            if cv2.getWindowProperty(win_title, cv2.WND_PROP_VISIBLE) < 1:
                 break
 
     except KeyboardInterrupt:
