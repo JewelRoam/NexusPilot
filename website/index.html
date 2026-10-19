@@ -1,0 +1,236 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="theme-color" content="#ffffff">
+  <meta name="description" content="NexusPilot is an open-source cooperative autonomous driving project combining vision perception, potential-field planning and vehicle-to-vehicle communication, from CARLA to Raspberry Pi 5.">
+  <meta property="og:title" content="NexusPilot | Cooperative autonomous driving">
+  <meta property="og:description" content="Perceive, plan and coordinate. An open-source driving stack for CARLA and Raspberry Pi 5.">
+  <meta property="og:type" content="website">
+  <meta property="og:url" content="https://jewelroam.github.io/NexusPilot/">
+  <link rel="canonical" href="https://jewelroam.github.io/NexusPilot/">
+  <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 40 40'%3E%3Crect width='40' height='40' rx='8' fill='%23253c30'/%3E%3Ctext x='20' y='28' text-anchor='middle' font-family='sans-serif' font-size='26' font-weight='700' fill='white'%3EN%3C/text%3E%3C/svg%3E">
+  <link rel="stylesheet" href="./styles.css">
+  <title>NexusPilot | Cooperative autonomous driving</title>
+  <script type="module" src="./app.js"></script>
+</head>
+<body>
+  <a class="skip-link" href="#overview" data-i18n="skip">Skip to content</a>
+  <header class="header wrap">
+    <a class="wordmark" href="#overview" aria-label="NexusPilot home">Nexus<span>Pilot</span><span class="wordmark-symbol" aria-hidden="true">↗</span></a>
+    <nav aria-label="Main navigation" data-i18n-aria="nav">
+      <a href="#architecture" data-i18n="navArchitecture">Architecture</a>
+      <a href="#showcase" data-i18n="navShowcase">Showcase</a>
+      <a href="#results" data-i18n="navResults">Results</a>
+      <a href="#start" data-i18n="navStart">Get started</a>
+    </nav>
+    <div class="header-actions">
+      <button class="language" type="button" aria-label="切换为中文" id="language">中文</button>
+      <a class="source-link" href="https://github.com/JewelRoam/NexusPilot">GitHub <span aria-hidden="true">↗</span></a>
+    </div>
+  </header>
+
+  <main id="overview">
+    <section class="hero wrap" aria-labelledby="hero-title">
+      <div class="hero-copy">
+        <p class="eyebrow" data-i18n="eyebrow">Cooperative autonomous driving</p>
+        <h1 id="hero-title" data-i18n="heroTitle">See the road.<br>Share the way.</h1>
+        <p class="lead" data-i18n="heroBody">An open-source driving stack that connects vision, motion planning and vehicle-to-vehicle communication. Built for CARLA and Raspberry Pi 5.</p>
+        <div class="hero-actions">
+          <a class="button primary" href="https://github.com/JewelRoam/NexusPilot"><span data-i18n="explore">Explore the code</span><span aria-hidden="true">↗</span></a>
+          <a class="text-link" href="#architecture"><span data-i18n="how">How it works</span><span aria-hidden="true">↓</span></a>
+        </div>
+        <p class="hero-note" data-i18n="heroNote">Python / CARLA 0.9.13 / Raspberry Pi 5</p>
+      </div>
+      <figure class="hero-media">
+        <video controls muted loop playsinline preload="metadata" poster="./media/carla-demo-poster.jpg" aria-label="Recorded CARLA demo showing YOLO detections and obstacle avoidance">
+          <source src="./media/carla-demo.mp4" type="video/mp4">
+          Your browser does not support HTML video.
+        </video>
+        <div class="media-caption"><span data-i18n="heroMediaLabel">Recorded simulation</span><span class="mono" aria-hidden="true">CARLA / 16 SEC</span></div>
+        <figcaption data-i18n="heroMediaCaption">YOLO detections, planned movement and a multi-vehicle obstacle scenario in CARLA Town03.</figcaption>
+      </figure>
+    </section>
+
+    <section class="intro wrap section" aria-labelledby="intro-title">
+      <p class="eyebrow" data-i18n="introEyebrow">The idea</p>
+      <div class="intro-grid">
+        <h2 id="intro-title" data-i18n="introTitle">A shared view.<br>A coordinated decision.</h2>
+        <div><p class="section-copy" data-i18n="introBody">A vehicle can only react to what it knows. NexusPilot combines local camera detections with information from nearby vehicles, then uses that shared view to plan movement and negotiate intersection conflicts.</p><p class="section-copy" data-i18n="introBody2">The same modular stack spans simulated roads and a physical 4WD platform, making perception, planning and cooperation easier to study together.</p></div>
+      </div>
+      <figure class="intersection-scene" aria-labelledby="intersection-scene-title">
+        <div class="intersection-scene-head">
+          <div>
+            <p class="scene-label" data-i18n="intersectionSceneLabel">Blind intersection / problem scenario</p>
+            <p id="intersection-scene-title" data-i18n="intersectionSceneTitle">Each car sees a road. Neither sees the other.</p>
+          </div>
+          <span class="scene-loop"><span class="scene-live-dot" aria-hidden="true"></span><span data-i18n="intersectionSceneLoop">Coordination loop</span></span>
+        </div>
+        <div class="intersection-canvas">
+          <svg class="intersection-art" viewBox="0 0 1000 440" preserveAspectRatio="xMidYMid meet" role="img" aria-labelledby="intersection-svg-title intersection-svg-desc">
+            <title id="intersection-svg-title" data-i18n="intersectionSvgTitle">Two connected vehicles approach a blind intersection</title>
+            <desc id="intersection-svg-desc" data-i18n="intersectionSvgDesc">A building blocks the line of sight between a car approaching from the left and a connected vehicle approaching from above. Vehicle-to-vehicle position sharing lets the left car proceed while the other yields.</desc>
+            <defs>
+              <pattern id="block-grid" width="18" height="18" patternUnits="userSpaceOnUse">
+                <path d="M18 0H0V18" fill="none" stroke="#e7eae5" stroke-width="1"/>
+              </pattern>
+            </defs>
+
+            <rect width="1000" height="440" fill="#f8f9f7"/>
+            <rect x="0" y="170" width="1000" height="100" class="road"/>
+            <rect x="450" y="0" width="100" height="440" class="road"/>
+            <path d="M0 170H450M550 170H1000M450 0V170M550 0V170M450 270V440M550 270V440" class="road-edge"/>
+            <path d="M0 220H430M570 220H1000M500 0V148M500 292V440" class="road-center"/>
+            <path d="M450 158H550M436 270H564" class="stop-line"/>
+
+            <g class="city-blocks">
+              <rect x="56" y="36" width="350" height="106" rx="4" class="block"/>
+              <rect x="56" y="36" width="350" height="106" rx="4" fill="url(#block-grid)" opacity=".55"/>
+              <rect x="82" y="60" width="72" height="32" rx="2" class="window"/>
+              <rect x="174" y="60" width="54" height="32" rx="2" class="window"/>
+              <rect x="248" y="60" width="78" height="32" rx="2" class="window"/>
+              <rect x="346" y="60" width="30" height="32" rx="2" class="window"/>
+
+              <rect x="610" y="292" width="334" height="106" rx="4" class="block"/>
+              <rect x="610" y="292" width="334" height="106" rx="4" fill="url(#block-grid)" opacity=".55"/>
+              <rect x="642" y="318" width="64" height="34" rx="2" class="window"/>
+              <rect x="724" y="318" width="80" height="34" rx="2" class="window"/>
+              <rect x="822" y="318" width="86" height="34" rx="2" class="window"/>
+            </g>
+
+            <path d="M326 194C357 185 384 159 406 142" class="blocked-sight"/>
+            <g class="blocked-marker" transform="translate(374 161)">
+              <circle r="12"/>
+              <path d="M-4-4L4 4M4-4L-4 4"/>
+            </g>
+
+            <path d="M336 200C365 145 415 116 468 101" class="shared-link"/>
+            <circle cx="500" cy="220" r="55" class="conflict-zone"/>
+
+            <g class="vehicle vehicle-a">
+              <circle cx="38" cy="20" r="43" class="signal-ring signal-ring-a"/>
+              <polygon points="77 15 153 -12 153 52" class="sensor-cone"/>
+              <ellipse cx="40" cy="35" rx="39" ry="11" class="vehicle-shadow"/>
+              <path d="M8 9H61L76 17V31H8C3 31 1 27 1 23V17C1 12 3 9 8 9Z" class="vehicle-body-a"/>
+              <path d="M17 12L27 4H51L61 12Z" class="vehicle-window"/>
+              <rect x="24" y="3" width="25" height="8" rx="3" class="vehicle-window"/>
+              <circle cx="18" cy="32" r="6" class="wheel"/>
+              <circle cx="59" cy="32" r="6" class="wheel"/>
+              <rect x="69" y="19" width="5" height="7" rx="2" class="headlight"/>
+              <text x="41" y="25" text-anchor="middle" class="vehicle-letter">A</text>
+            </g>
+
+            <g class="vehicle vehicle-b">
+              <circle cx="19" cy="37" r="43" class="signal-ring signal-ring-b"/>
+              <polygon points="1 68 -27 144 47 144" class="sensor-cone"/>
+              <ellipse cx="37" cy="38" rx="11" ry="39" class="vehicle-shadow"/>
+              <path d="M9 8V61L17 76H31L39 61V8C39 3 35 1 31 1H17C12 1 9 3 9 8Z" class="vehicle-body-b"/>
+              <path d="M12 17L4 27V51L12 61Z" class="vehicle-window"/>
+              <rect x="3" y="24" width="8" height="25" rx="3" class="vehicle-window"/>
+              <circle cx="32" cy="18" r="6" class="wheel"/>
+              <circle cx="32" cy="59" r="6" class="wheel"/>
+              <rect x="19" y="69" width="7" height="5" rx="2" class="headlight"/>
+              <text x="20" y="41" text-anchor="middle" class="vehicle-letter">B</text>
+            </g>
+
+            <g class="intersection-origin" transform="translate(23 407)">
+              <path d="M0-7V0H7" />
+              <text x="12" y="4">INTERSECTION 01</text>
+            </g>
+          </svg>
+
+          <div class="scene-status" aria-hidden="true">
+            <span class="scene-signal"></span>
+            <span class="scene-status-copy">
+              <span class="status-local" data-i18n="intersectionLocal">Local view / building blocks the line of sight</span>
+              <span class="status-shared" data-i18n="intersectionShared">V2V / nearby vehicle position received</span>
+              <span class="status-decision" data-i18n="intersectionDecision">Decision / A proceeds · B yields</span>
+            </span>
+          </div>
+        </div>
+        <figcaption>
+          <span data-i18n="intersectionCaption">When one sensor view is incomplete, shared position data lets both vehicles agree who should go first before they enter the conflict area.</span>
+          <span class="scene-legend" data-i18n="intersectionLegend">A local vehicle · B connected vehicle · dashed link shared intent</span>
+        </figcaption>
+      </figure>
+    </section>
+
+
+    <section id="showcase" class="wrap section" aria-labelledby="showcase-title">
+      <div class="showcase-heading"><div><p class="eyebrow" data-i18n="showcaseEyebrow">Showcase</p><h2 id="showcase-title" data-i18n="showcaseTitle">Built in simulation.<br>Tested on hardware.</h2></div><p class="section-copy" data-i18n="showcaseBody">Recorded trials connect the design to the physical system, from a CARLA scene to a Raspberry Pi 5 four-wheel drive platform.</p></div>
+      <div class="media-grid">
+        <figure class="media-wide"><img src="./media/apf-avoidance.jpg" width="1600" height="866" loading="lazy" alt="CARLA view showing detections and an obstacle avoidance scenario under a raised road"><figcaption><span data-i18n="apfCaption">Improved APF in a dense CARLA scene, with detections and the active vehicle state overlaid.</span><span class="mono">01 / CARLA</span></figcaption></figure>
+        <figure class="media-tall"><img src="./media/raspberry-pi-platform.jpg" width="1600" height="1200" loading="lazy" alt="Raspberry Pi four-wheel drive car with camera, ultrasonic sensor and motor control wiring"><figcaption><span data-i18n="hardwarePhotoCaption">The physical 4WD platform: USB camera, ultrasonic sensing and motor control.</span><span class="mono">02 / HARDWARE</span></figcaption></figure>
+        <figure><img src="./media/hardware-approach.jpg" width="1472" height="981" loading="lazy" alt="Raspberry Pi car approaching a warning sign during an indoor obstacle-avoidance trial"><figcaption><span data-i18n="hardwareApproachCaption">The physical platform approaches a floor sign during a controlled indoor trial.</span><span class="mono">05 / TEST</span></figcaption></figure>
+        <figure class="media-v2v"><img src="./media/v2v-vehicle-views.jpg" width="1004" height="1576" loading="lazy" alt="Two CARLA vehicle views sharing detections and V2V coordination state"><figcaption><span data-i18n="v2vCaption">Two vehicles share detections and coordination state in a blind-intersection scenario.</span><span class="mono">03 / V2V</span></figcaption></figure>
+        <figure><img src="./media/carla-detection.jpg" width="1600" height="943" loading="lazy" alt="CARLA vehicle view with a YOLO detection around the vehicle ahead"><figcaption><span data-i18n="detectionCaption">A vehicle detected from the camera feed, with distance and runtime status shown in the overlay.</span><span class="mono">04 / PERCEPTION</span></figcaption></figure>
+      </div>
+      <figure class="hardware-video">
+        <video controls muted loop playsinline preload="none" poster="./media/hardware-demo-poster.jpg" aria-label="Recorded physical car avoiding a floor sign in a corridor">
+          <source src="./media/hardware-demo.mp4" type="video/mp4">
+          Your browser does not support HTML video.
+        </video>
+        <figcaption><span><strong data-i18n="hardwareVideoTitle">Physical-platform avoidance trial.</strong> <span data-i18n="hardwareVideoCaption">A short indoor run showing the car steering around a floor sign.</span></span><span class="mono">12 SEC / RASPBERRY PI 5</span></figcaption>
+      </figure>
+    </section>
+
+    <section id="architecture" class="wrap section" aria-labelledby="architecture-title">
+      <p class="eyebrow" data-i18n="architectureEyebrow">Architecture</p>
+      <h2 id="architecture-title" data-i18n="architectureTitle">From pixels to a path.</h2>
+      <p class="section-copy section-description" data-i18n="architectureBody">Independent modules connect sensing to action. A cooperation layer feeds shared observations and driving intent back into planning.</p>
+      <div class="pipeline" aria-label="System pipeline" data-i18n-aria="pipelineLabel">
+        <div class="pipeline-node"><span class="mono" data-i18n="sensor">Sensing</span><strong data-i18n="sensorTitle">Camera + depth</strong><span data-i18n="sensorBody">Observe the surroundings</span></div>
+        <span class="pipeline-arrow" aria-hidden="true">→</span>
+        <div class="pipeline-node"><span class="mono" data-i18n="perception">Perception</span><strong>YOLO11n</strong><span data-i18n="perceptionBody">Detect and track obstacles</span></div>
+        <span class="pipeline-arrow" aria-hidden="true">→</span>
+        <div class="pipeline-node"><span class="mono" data-i18n="planning">Planning</span><strong data-i18n="plannerTitle">Improved APF</strong><span data-i18n="plannerBody">Find an obstacle-aware path</span></div>
+        <span class="pipeline-arrow" aria-hidden="true">→</span>
+        <div class="pipeline-node"><span class="mono" data-i18n="control">Control</span><strong data-i18n="controlTitle">Steering + speed</strong><span data-i18n="controlBody">Translate plans into motion</span></div>
+        <div class="cooperation-node"><span aria-hidden="true">↔</span><strong data-i18n="cooperationTitle">V2V cooperation</strong><span data-i18n="cooperationBody">Shared detections, driving intent and time-to-intersection</span></div>
+      </div>
+      <div class="feature-grid">
+        <article><h3 data-i18n="visionTitle">Lightweight vision</h3><p data-i18n="visionBody">YOLO11n detection and IoU tracking identify vehicles, pedestrians and cyclists. The detector supports PyTorch, ONNX Runtime and OpenVINO backends.</p><a href="https://github.com/JewelRoam/NexusPilot/tree/main/perception" class="module-link">perception/ <span aria-hidden="true">↗</span></a></article>
+        <article><h3 data-i18n="apfTitle">Planning beyond local minima</h3><p data-i18n="apfBody">Rotational fields complement attractive and repulsive forces. Stuck detection, recovery logic and steering smoothing help the planner handle difficult obstacle layouts.</p><a href="https://github.com/JewelRoam/NexusPilot/tree/main/planning" class="module-link">planning/ <span aria-hidden="true">↗</span></a></article>
+        <article><h3 data-i18n="v2vTitle">Decisions between vehicles</h3><p data-i18n="v2vBody">Nearby vehicles exchange observations and intent. Distance-aware coordination and time-to-intersection estimates guide yielding, slowing and proceeding.</p><a href="https://github.com/JewelRoam/NexusPilot/tree/main/cooperation" class="module-link">cooperation/ <span aria-hidden="true">↗</span></a></article>
+        <article><h3 data-i18n="platformTitle">Two deployment environments</h3><p data-i18n="platformBody">CARLA provides repeatable scenarios. Raspberry Pi 5 connects the stack to camera input, ultrasonic sensing and motor control on a physical 4WD car.</p><a href="https://github.com/JewelRoam/NexusPilot/tree/main/rpi_deploy" class="module-link">rpi_deploy/ <span aria-hidden="true">↗</span></a></article>
+      </div>
+    </section>
+
+    <section id="results" class="wrap section" aria-labelledby="results-title">
+      <div class="results-heading"><div><p class="eyebrow" data-i18n="resultsEyebrow">Evaluation</p><h2 id="results-title" data-i18n="resultsTitle">Reported project results.</h2></div><a class="text-link" href="https://github.com/JewelRoam/NexusPilot"><span data-i18n="resultsSource">Project repository</span><span aria-hidden="true">↗</span></a></div>
+      <p class="section-copy section-description" data-i18n="resultsBody">Results reported in the final project report, across CARLA simulation and Raspberry Pi 5 trials.</p>
+      <div class="table-scroll"><table>
+        <caption class="sr-only" data-i18n="tableCaption">Reported evaluation results for CARLA and Raspberry Pi 5</caption>
+        <thead><tr><th scope="col" data-i18n="metric">Metric</th><th scope="col">CARLA</th><th scope="col">Raspberry Pi 5</th></tr></thead>
+        <tbody>
+          <tr><th scope="row" data-i18n="successRate">Obstacle avoidance success rate</th><td><strong>90.4<span>%</span></strong><small data-i18n="simulationTrials">250 trials</small></td><td><strong>75.0<span>%</span></strong><small data-i18n="hardwareTrials">20 trials</small></td></tr>
+          <tr><th scope="row" data-i18n="throughput">Pipeline throughput</th><td><strong>19.3 <span>FPS</span></strong></td><td><strong>12.7 <span>FPS</span></strong></td></tr>
+          <tr><th scope="row" data-i18n="collisionReduction">Blind-intersection collision reduction with V2V</th><td><strong>85.7<span>%</span></strong></td><td class="result-text" data-i18n="notReported">Not reported</td></tr>
+          <tr><th scope="row" data-i18n="escape">Local-minimum escape success</th><td><strong>85.7<span>%</span></strong></td><td class="result-text" data-i18n="notReported">Not reported</td></tr>
+        </tbody>
+      </table></div>
+      <p class="results-note" data-i18n="resultsNote">These figures summarize the controlled experiments described in the final report. They are research results and do not represent a general road-safety guarantee.</p>
+    </section>
+
+    <section id="start" class="wrap section start-section" aria-labelledby="start-title">
+      <div class="start-intro"><p class="eyebrow" data-i18n="startEyebrow">Get started</p><h2 id="start-title" data-i18n="startTitle">Explore it.<br>Run it. Build on it.</h2><p class="section-copy" data-i18n="startBody">Start in simulation, explore individual modules, or follow the hardware guide for a Raspberry Pi deployment.</p><a class="text-link" href="https://github.com/JewelRoam/NexusPilot#-quick-start-installation"><span data-i18n="setupGuide">Read the setup guide</span><span aria-hidden="true">↗</span></a></div>
+      <div class="quickstart">
+        <div class="code-heading"><div role="tablist" aria-label="Run environment" data-i18n-aria="tabsLabel"><button type="button" role="tab" id="tab-simulation" aria-controls="code-panel" aria-selected="true" data-mode="simulation" data-i18n="tabSimulation">Simulation</button><button type="button" role="tab" id="tab-hardware" aria-controls="code-panel" aria-selected="false" tabindex="-1" data-mode="hardware" data-i18n="tabHardware">Hardware</button></div><button class="copy-button" type="button" id="copy" data-i18n="copy">Copy</button></div>
+        <div id="code-panel" role="tabpanel" aria-labelledby="tab-simulation" tabindex="0"><pre><code id="commands">git clone https://github.com/JewelRoam/NexusPilot.git
+cd NexusPilot
+python -m venv .carla_env
+source .carla_env/bin/activate
+pip install -r requirements.txt
+
+python simulation/multi_vehicle_demo.py</code></pre></div>
+        <p class="code-note" id="code-note" data-i18n="simulationNote">Linux/macOS shell. Start the CARLA 0.9.13 server first; Python 3.8 is recommended by the repository for CARLA compatibility. Windows activation steps are in the setup guide.</p>
+        <p id="copy-status" class="sr-only" role="status"></p>
+      </div>
+    </section>
+
+    <section class="closing wrap" aria-labelledby="closing-title"><div><h2 id="closing-title" data-i18n="closingTitle">Open code. Room to explore.</h2><p data-i18n="closingBody">Read the implementation, reproduce the scenarios, or contribute an improvement.</p></div><a class="button primary" href="https://github.com/JewelRoam/NexusPilot"><span data-i18n="viewRepository">View repository</span><span aria-hidden="true">↗</span></a></section>
+  </main>
+  <footer class="footer wrap"><a class="wordmark" href="#overview">Nexus<span>Pilot</span></a><span data-i18n="footerDescription">Cooperative autonomous driving</span><div><a href="https://github.com/JewelRoam/NexusPilot/blob/main/LICENSE" data-i18n="license">MIT license</a><a href="https://github.com/JewelRoam/NexusPilot/issues" data-i18n="issues">Issues ↗</a></div></footer>
+</body>
+</html>
